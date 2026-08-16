@@ -1,2 +1,5 @@
 Backend/uploads/
 Backend/.env
+
+FlowiseApp/node_modules/
+node_modules/
