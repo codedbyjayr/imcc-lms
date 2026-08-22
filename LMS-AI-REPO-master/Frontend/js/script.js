@@ -2488,7 +2488,8 @@ async function renderClassRecordPro(courseId, ctx, root, courseTitle) {
 /* ===== FINAL UPGRADE: Google SSO main + Super Admin hyperlink =====
    This final block supersedes the earlier login handlers in this file. */
 /* ===== ULTIMATE GOOGLE SSO BLOCK (final) ===== */
-const GOOGLE_CLIENT_ID = '27578574110-v92r0hvooifo6qrk903j06gp4bqoslm0.apps.googleusercontent.com';
+// GOOGLE_CLIENT_ID is intentionally NOT hardcoded here.
+// It is fetched at runtime from /api/config (set via GOOGLE_CLIENT_ID env var on the backend).
 
 (function loadGsiScript() {
   if (document.querySelector('script[src*="accounts.google.com/gsi"]')) return;
@@ -2537,10 +2538,14 @@ function toggleLoginTab(tab) {
   }
 }
 
-function initRealGoogleSSO() {
+function initRealGoogleSSO(googleClientId) {
+  if (!googleClientId) {
+    console.warn('[SSO] GOOGLE_CLIENT_ID is not configured. Google sign-in will be unavailable.');
+    return;
+  }
   const setup = () => {
     if (!window.google?.accounts?.id) return false;
-    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleSSOLogin });
+    google.accounts.id.initialize({ client_id: googleClientId, callback: handleGoogleSSOLogin });
     let holder = document.getElementById('googleRealBtn');
     if (!holder) {
       const oldBtn = Array.from(document.querySelectorAll('#loginScreen button')).find((b) => /sign in with google/i.test(b.textContent || ''));
@@ -2564,7 +2569,7 @@ function initRealGoogleSSO() {
   setTimeout(setup, 2000);
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   toggleLoginTab('google');
   const st = document.createElement('style');
   st.textContent = '.superadmin-link{background:none!important;border:none!important;box-shadow:none!important;color:#8a6470!important;font-size:12px!important;font-weight:600!important;text-decoration:underline!important;padding:4px!important;margin:12px auto 4px!important;display:block!important;cursor:pointer}';
@@ -2572,7 +2577,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('#loginScreen button, #loginScreen a').forEach((el) => {
     if ((el.textContent || '').trim() === 'Super Admin') el.classList.add('superadmin-link');
   });
-  initRealGoogleSSO();
+  // Fetch GOOGLE_CLIENT_ID from backend config (never hardcode it in frontend source)
+  try {
+    const cfg = await fetch('/api/config').then((r) => r.json());
+    initRealGoogleSSO(cfg.googleClientId || '');
+  } catch (_e) {
+    console.warn('[SSO] Could not load /api/config; Google sign-in may be unavailable.');
+    initRealGoogleSSO('');
+  }
 });
 
 /* ===== SUPER ADMIN = ROLE REGISTRAR (final) ===== */

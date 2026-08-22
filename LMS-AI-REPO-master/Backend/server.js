@@ -87,6 +87,14 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
+// Expose non-sensitive public config to the frontend (e.g. Google Client ID).
+// This avoids hardcoding secrets in frontend source files.
+app.get('/api/config', (_req, res) => {
+  res.json({
+    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+  });
+});
+
 // Serve the reorganized frontend assets.
 app.use(express.static(path.join(__dirname, '../Frontend')));
 
@@ -115,11 +123,15 @@ const upload = multer({
 app.use('/uploads', express.static(uploadDir));
 
 // ⚠️ Double check these 4 fields!
+if (!process.env.DB_PASSWORD) {
+  console.warn('[WARN] DB_PASSWORD is not set in .env — database connection will likely fail.');
+}
+
 const pool = new Pool({
   user: process.env.DB_USER || 'postgres',
   host: process.env.DB_HOST || 'localhost',
   database: process.env.DB_NAME || 'AI-LMS',
-  password: process.env.DB_PASSWORD || '123',
+  password: process.env.DB_PASSWORD,
   port: Number(process.env.DB_PORT || 5432),
 });
 // ==========================================
