@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  web:
+    image: ${DOCKERHUB_USERNAME}/imcc-lms:latest
+    container_name: portal_web
+    ports:
+      - "80:80"
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+    restart: always
+    networks:
+      - portal_net
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: portal_ngrok
+    command:
+      - "http"
+      - "web:80"
+      - "--domain=${NGROK_DOMAIN}"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    restart: always
+    networks:
+      - portal_net
+
+networks:
+  portal_net:
+    driver: bridge
