@@ -27,3 +27,8 @@ out/
 .idea/
 *.DS_Store
 Thumbs.db
+
+
+# AI / IDE metadata
+.agents/*mcp.json
+.agents/*
