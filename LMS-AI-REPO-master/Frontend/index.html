@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LMS Portal</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <!-- GOOGLE SSO LOGIN OVERLAY -->
+    <div id="loginScreen" style="position: fixed; inset: 0; background: #4a001f; display: flex; align-items: center; justify-content: center; z-index: 9999;">
+      <div style="background: white; border-radius: 20px; padding: 40px; width: 360px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); text-align: center;">
+        <div style="width: 60px; height: 60px; background: #d81b60; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 24px; font-weight: bold; margin: 0 auto 16px auto;">IL</div>
+        <h2 style="margin: 0 0 6px 0; color: #4a001f; font-size: 22px; font-weight: 800;">IMCC LMS Portal</h2>
+        <p style="margin: 0 0 20px 0; color: #666; font-size: 13px;">Sign in to your institutional email to access the LMS portal</p>
+
+        <div style="margin-bottom: 16px;">
+          <button id="btnBackToNormal" type="button" onclick="toggleLoginTab('google')" aria-label="Back to Google sign-in" title="Back to Google sign-in" style="display: none; width: 38px; border: 1px solid #4a001f; background: white; color: #4a001f; border-radius: 6px; font-size: 22px; font-weight: bold; cursor: pointer;">&larr;</button>
+        </div>
+
+        <div id="adminAuthSection" style="display: none; text-align: left;">
+          <label for="adminLoginEmail" style="font-size: 12px; font-weight: bold; color: #333;">Email or Student ID</label>
+          <input type="text" id="adminLoginEmail" placeholder="user@imcc.edu.ph or ID number" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; margin: 4px 0 12px; box-sizing: border-box;">
+          <label for="adminLoginPassword" style="font-size: 12px; font-weight: bold; color: #333;">Password</label>
+          <input type="password" id="adminLoginPassword" placeholder="••••••••" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; margin: 4px 0 16px; box-sizing: border-box;">
+          <button type="button" onclick="loginWithCredentials()" style="width: 100%; padding: 10px; background: #4a001f; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">Login</button>
+        </div>
+
+        <div id="googleAuthSection" style="margin-top: 18px;">
+          <div id="googleRealBtn"
+               style="display: flex; justify-content: center; margin: 10px 0;"></div>
+          <button id="btnTabAdmin" type="button" onclick="toggleLoginTab('admin')" style="display: block; margin: 14px auto 0; padding: 4px; border: 0; background: transparent; color: #8a6470; font-size: 12px; font-weight: 600; text-decoration: underline; cursor: pointer;">Super Admin</button>
+        </div>
+        <p id="loginError" style="color: #d93025; font-size: 12px; margin-top: 15px; display: none;"></p>
+      </div>
+    </div>
+
+    <div class="app-shell">
+      <div id="loginWelcomeModal" class="login-welcome-modal hidden" role="dialog" aria-modal="true" aria-labelledby="loginWelcomeTitle" aria-describedby="loginWelcomeMessage">
+        <div class="login-welcome-card">
+          <div class="login-welcome-icon" aria-hidden="true">✓</div>
+          <div>
+            <p class="login-welcome-eyebrow">Signed in successfully</p>
+            <h2 id="loginWelcomeTitle">Welcome back</h2>
+            <p id="loginWelcomeMessage">Your dashboard is ready.</p>
+          </div>
+          <button id="closeLoginWelcome" class="login-welcome-button" type="button">Continue to dashboard</button>
+        </div>
+      </div>
+      <aside class="sidebar">
+        <div class="brand-row">
+          <div class="brand-avatar">IL</div>
+          <div class="brand">IMCC LMS</div>
+        </div>
+        <nav class="nav-list">
+          <button class="nav-btn active" data-target="classes">Classes</button>
+          <button class="nav-btn" data-target="assignments">Assignments</button>
+          <button class="nav-btn" data-target="calendar">Calendar</button>
+          <button class="nav-btn" data-target="resources">Resources</button>
+        </nav>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <div>
+            <h1 id="greetingHeading" aria-live="polite">WELCOME TO IMCC LMS PORTAL</h1>
+            <p id="academicInfo" class="topbar-subtitle"></p>
+          </div>
+          <div class="topbar-actions">
+            <div class="role-indicator" aria-label="Signed-in role">
+              <span>Signed in as:</span>
+              <strong id="signedInRole">Student</strong>
+            </div>
+            <button id="notificationBtn" class="ghost-btn notification-btn" aria-label="Notifications" title="Notifications" aria-haspopup="dialog" aria-expanded="false">
+              <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+              </svg>
+            </button>
+            <button id="joinClassBtn" class="primary-btn">Join Class</button>
+            <button id="createClassBtn" class="profile-settings-btn" aria-label="Create Class">
+              <span class="profile-avatar">+</span>
+              <span class="profile-label">Create Class</span>
+            </button>
+            <button id="logoutBtn" class="profile-settings-btn logout-btn" type="button">Log out</button>
+          </div>
+        </header>
+
+        <!-- SUPER ADMIN DASHBOARD -->
+        <div id="adminPanel" style="display: none; max-width: 1000px; margin: 30px auto; padding: 25px; background: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+          <h2 style="color: #4a001f; margin-top: 0; font-size: 24px;">Super Admin Control Panel</h2>
+          <p style="color: #666; font-size: 14px;">Create accounts for Deans, Instructors, and Students. Created accounts are listed below by role.</p>
+          <div style="background: #fdfdfd; border: 1px solid #e0e0e0; padding: 20px; border-radius: 8px; margin-bottom: 30px;">
+            <h3 style="margin-top: 0; color: #333; font-size: 16px;">Assign Institutional Google Role</h3>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+              <div><label for="adminNewName" style="font-size: 12px; font-weight: bold; color: #444;">Full Name (optional)</label><input type="text" id="adminNewName" placeholder="e.g. Juan Dela Cruz" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; box-sizing: border-box;"></div>
+              <div><label for="adminNewEmail" style="font-size: 12px; font-weight: bold; color: #444;">Email Address</label><input type="email" id="adminNewEmail" placeholder="user@imcc.edu.ph" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; box-sizing: border-box;"></div>
+              <div><label for="adminNewRole" style="font-size: 12px; font-weight: bold; color: #444;">Assigned Role</label><select id="adminNewRole" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; margin-top: 4px; box-sizing: border-box;"><option value="student">Student</option><option value="teacher">Instructor</option><option value="dean">Dean</option></select></div>
+            </div>
+            <button type="button" onclick="createNewUserAccount()" style="margin-top: 15px; padding: 10px 20px; background: #4a001f; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">+ Assign Google Role</button>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 25px;">
+            <div><h3 style="color: #4a001f; border-bottom: 2px solid #4a001f; padding-bottom: 5px; margin-bottom: 10px; font-size: 18px;">Deans</h3><table style="width: 100%; border-collapse: collapse; font-size: 14px; text-align: left;"><thead><tr style="background: #f5f5f5; color: #333;"><th style="padding: 10px; border: 1px solid #ddd;">ID Number</th><th style="padding: 10px; border: 1px solid #ddd;">Name</th><th style="padding: 10px; border: 1px solid #ddd;">Email</th></tr></thead><tbody id="deansTableBody"><tr><td colspan="3" style="padding: 10px; text-align: center; color: #888;">No Deans registered.</td></tr></tbody></table></div>
+            <div><h3 style="color: #0d47a1; border-bottom: 2px solid #0d47a1; padding-bottom: 5px; margin-bottom: 10px; font-size: 18px;">Instructors</h3><table style="width: 100%; border-collapse: collapse; font-size: 14px; text-align: left;"><thead><tr style="background: #f5f5f5; color: #333;"><th style="padding: 10px; border: 1px solid #ddd;">ID Number</th><th style="padding: 10px; border: 1px solid #ddd;">Name</th><th style="padding: 10px; border: 1px solid #ddd;">Email</th></tr></thead><tbody id="teachersTableBody"><tr><td colspan="3" style="padding: 10px; text-align: center; color: #888;">No Instructors registered.</td></tr></tbody></table></div>
+            <div><h3 style="color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 5px; margin-bottom: 10px; font-size: 18px;">Students</h3><table style="width: 100%; border-collapse: collapse; font-size: 14px; text-align: left;"><thead><tr style="background: #f5f5f5; color: #333;"><th style="padding: 10px; border: 1px solid #ddd;">ID Number</th><th style="padding: 10px; border: 1px solid #ddd;">Name</th><th style="padding: 10px; border: 1px solid #ddd;">Email</th></tr></thead><tbody id="studentsTableBody"><tr><td colspan="3" style="padding: 10px; text-align: center; color: #888;">No Students registered.</td></tr></tbody></table></div>
+          </div>
+        </div>
+
+        <div id="joinClassModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="joinClassTitle">
+          <div class="modal-content">
+            <button class="close-modal" aria-label="Close">&times;</button>
+            <h3 id="joinClassTitle">Join a Class</h3>
+            <p class="modal-copy">Enter the class code to join the designated class.</p>
+            <input id="classCodeInput" type="text" placeholder="Class code (e.g., IQPHJR)" maxlength="6" autocomplete="off" style="text-transform:uppercase" />
+            <p id="classCodeMessage" class="form-note">You need a class code from your instructor to join.</p>
+            <button id="submitClassCode" class="primary-btn">Join</button>
+          </div>
+        </div>
+
+        <div id="createClassModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="createClassTitle">
+          <div class="modal-content create-class-modal">
+            <button class="close-modal modal-close-icon" aria-label="Close">&times;</button>
+            <div class="modal-header">
+              <h3 id="createClassTitle">Create Class</h3>
+              <p>Set up a new class section for your students.</p>
+            </div>
+            <div id="createClassFormGroup" class="form-group-wrapper">
+              <div class="form-field">
+                <label for="classNameInput">Class Name <span class="required">*</span></label>
+                <input id="classNameInput" type="text" placeholder="" required />
+              </div>
+
+              <div class="form-field">
+                <label for="classCourseInput">Course Code</label>
+                <input id="classCourseInput" type="text" placeholder="" />
+              </div>
+
+              <div class="form-field">
+                <label for="classCourseNameInput">Course</label>
+                <input id="classCourseNameInput" type="text" placeholder="" />
+              </div>
+
+              <div class="form-field">
+                <label for="classYearInput">Year</label>
+                <input id="classYearInput" type="text" placeholder="" />
+              </div>
+
+              <div class="form-field">
+                <label for="classInstructorInput">Instructor</label>
+                <input id="classInstructorInput" type="text" placeholder="" />
+              </div>
+
+              <div class="form-field">
+                <label for="classSectionInput">Section <span class="optional-note">(optional)</span></label>
+                <input id="classSectionInput" type="text" placeholder="" />
+              </div>
+
+              <div class="form-field">
+                <label for="classCategoryInput">Subject Notes</label>
+                <input id="classCategoryInput" type="text" placeholder="" />
+              </div>
+              <p id="createClassMessage" class="form-note"></p>
+              <div class="modal-actions">
+                <button id="createClassSubmit" class="btn-primary" type="button">Create Class</button>
+              </div>
+            </div>
+            <div id="createClassSuccessBox" class="success-box" hidden>
+              <div class="success-icon" aria-hidden="true">✓</div>
+              <h3>Class Created Successfully!</h3>
+              <p>Share this join code with your students:</p>
+              <div class="code-display-group">
+                <input id="classCodeDisplay" type="text" readonly aria-label="Generated class code" />
+                <button id="copyCreateCodeBtn" class="btn-copy" type="button">Copy</button>
+              </div>
+              <button id="finishCreateBtn" class="btn-secondary" type="button">Done &amp; Go to Dashboard</button>
+            </div>
+          </div>
+        </div>
+
+        <section class="hero-card" hidden aria-hidden="true" style="display: none !important;">
+          <div>
+            <p class="eyebrow">Upcoming</p>
+            <h2 id="heroTitle">Loading upcoming class…</h2>
+            <p id="heroCopy">Please wait while dashboard data loads.</p>
+          </div>
+          <div class="hero-actions">
+            <button id="heroPrimary" class="primary-btn">Open Class</button>
+            <button id="viewDetailsBtn" class="ghost-btn">View Details</button>
+          </div>
+        </section>
+
+        <div id="openClassModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="openClassTitle">
+          <div class="modal-content">
+            <button class="close-modal" aria-label="Close">&times;</button>
+            <h3 id="openClassTitle">Open Class</h3>
+            <p class="modal-copy">This action takes you into the selected class dashboard, where you can access lessons, assignments, and class notes.</p>
+            <p class="form-note">Class: Web Systems & Technologies</p>
+            <button id="confirmOpenClass" class="primary-btn">Enter Class</button>
+          </div>
+        </div>
+
+        <div id="viewDetailsModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="viewDetailsTitle">
+          <div class="modal-content">
+            <button class="close-modal" aria-label="Close">&times;</button>
+            <h3 id="viewDetailsTitle">Class Details</h3>
+            <p class="modal-copy">Explore the class syllabus, upcoming lessons, and assignment highlights.</p>
+            <ul class="list">
+              <li><strong>Course:</strong> Web Systems & Technologies</li>
+              <li><strong>Instructor:</strong> Sir Ortiz</li>
+              <li><strong>Next Lesson:</strong> Event-driven architecture</li>
+              <li><strong>Due soon:</strong> CCS Project Plan • Jul 15</li>
+            </ul>
+            <button id="closeDetails" class="primary-btn">Close</button>
+          </div>
+        </div>
+
+        <div id="notificationModal" class="modal notification-popover hidden" role="dialog" aria-labelledby="notificationTitle">
+          <div class="modal-content notification-modal-content">
+            <button class="close-modal" aria-label="Close">&times;</button>
+            <div class="notification-header">
+              <div>
+                <p class="eyebrow">Notifications</p>
+                <h3 id="notificationTitle">Notification Dashboard</h3>
+                <p class="modal-copy">View recent alerts, reminders, and updates in one place.</p>
+              </div>
+              <span id="notifBadge" class="tag">0 Highlights</span>
+            </div>
+            <div class="notification-summary">
+              <div class="notification-card">
+                <p class="small-label">Active Classes</p>
+                <strong id="countActiveClasses">0</strong>
+                <span class="notification-card-copy">Live enrolled courses</span>
+              </div>
+              <div class="notification-card">
+                <p class="small-label">Assignments Due</p>
+                <strong id="countAssignmentsDue">0</strong>
+                <span class="notification-card-copy">Homework due this week</span>
+              </div>
+              <div class="notification-card">
+                <p class="small-label">Events</p>
+                <strong id="countEvents">4</strong>
+                <span class="notification-card-copy">Meetings and reminders</span>
+              </div>
+              <div class="notification-card">
+                <p class="small-label">Resources</p>
+                <strong id="countResources">0</strong>
+                <span class="notification-card-copy">Study guides and files</span>
+              </div>
+            </div>
+            <div class="notification-list">
+              <div class="notification-group">
+                <p class="notification-group-label">Today’s priorities</p>
+                <div id="priorityAlertsList"></div>
+              </div>
+              <div class="notification-group">
+                <p class="notification-group-label">System alerts</p>
+                <div id="systemAlertsList"></div>
+              </div>
+            </div>
+            <button id="closeNotification" class="primary-btn">Close</button>
+          </div>
+        </div>
+
+        <div id="courseInfoModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="courseInfoTitle">
+          <div class="modal-content">
+            <button class="close-modal" aria-label="Close">&times;</button>
+            <p class="eyebrow" id="courseInfoCategory">Course</p>
+            <h3 id="courseInfoTitle">Course Info</h3>
+            <p class="modal-copy" id="courseInfoDescription">Details about the selected course will appear here.</p>
+            <ul class="list" id="courseInfoList"></ul>
+            <button id="courseInfoAction" class="primary-btn">Open Module</button>
+          </div>
+        </div>
+
+        <section id="classes" class="content-section active">
+          <section id="coursesContainer" class="course-list" aria-live="polite">
+            <p class="course-loader">Loading active classes…</p>
+            <article class="course-card clickable" tabindex="0" role="button" data-course-category="Programming" data-course-title="EVENT-DRIVEN PROGRAMMING" data-course-description="Learn how user actions and system events drive interactive applications. Practice building event handlers and callback flows." data-class-materials='["Event callback notes", "Practice exercise", "Quiz 5"]' data-class-resources='["Example JS file", "Debugger tips", "Event flow chart"]' data-class-announcements='["Submit event handler assignment.", "Live coding session today at 3pm."]' data-class-upcoming='["Quiz 5 due tomorrow", "Interactive lab review"]'>
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Programming</p>
+                  <h3>EVENT-DRIVEN PROGRAMMING</h3>
+                </div>
+                <span class="tag">Live</span>
+              </div>
+              <p class="course-meta">Unit 5 • Practice set due tomorrow</p>
+              <div class="chip-row">
+                <button class="pill-btn">Lesson</button>
+                <button class="pill-btn">Quiz</button>
+              </div>
+            </article>
+
+            <article class="course-card clickable" tabindex="0" role="button" data-course-category="Architecture" data-course-title="SYSTEM INTEGRATION AND ARCHITECTURE" data-course-description="Understand how software components, APIs, and services connect to build a complete system. Review lab integration tasks and architecture patterns." data-class-materials='["Integration diagram", "API lab instructions", "System design worksheet"]' data-class-resources='["Service map", "Integration checklist", "Middleware notes"]' data-class-announcements='["Lab report due Friday.", "Review system architecture flow."]' data-class-upcoming='["Draft integration plan", "Submit API diagram"]'>
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Architecture</p>
+                  <h3>SYSTEM INTEGRATION AND ARCHITECTURE</h3>
+                </div>
+                <span class="tag alt">Pending</span>
+              </div>
+              <p class="course-meta">Lab report • Due Friday</p>
+              <div class="chip-row">
+                <button class="pill-btn">Lab Sheet</button>
+                <button class="pill-btn">Resources</button>
+              </div>
+            </article>
+
+            <article class="course-card clickable" tabindex="0" role="button" data-course-category="Networking" data-course-title="INTRO TO NETWORK SECURITY" data-course-description="Explore network protection, threat monitoring, and secure configuration fundamentals. Hands-on labs prepare you for real-world security tasks." data-class-materials='["Firewall hands-on guide", "Threat model worksheet", "Secure configuration lab"]' data-class-resources='["Security policy template", "Access list notes", "Incident response guide"]' data-class-announcements='["Firewall setup due Wed.", "Security briefing tomorrow."]' data-class-upcoming='["Complete lab checklist", "Review access controls"]'>
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Networking</p>
+                  <h3>INTRO TO NETWORK SECURITY</h3>
+                </div>
+                <span class="tag">Active</span>
+              </div>
+              <p class="course-meta">Module 2 • Firewall setup due Wed</p>
+              <div class="chip-row">
+                <button class="pill-btn">Guide</button>
+                <button class="pill-btn">Lab</button>
+              </div>
+            </article>
+
+            <article class="course-card clickable" tabindex="0" role="button" data-course-category="Databases" data-course-title="CCS DATABASE DESIGN" data-course-description="Design database schemas, normalize tables, and plan relationships for your class system. Explore ER models and SQL structure." data-class-materials='["Schema planning worksheet", "Normalization guide", "ER diagram examples"]' data-class-resources='["SQL cheat sheet", "Database design checklist", "Sample schema files"]' data-class-announcements='["Schema review session tomorrow.", "Submit ER diagram by Monday."]' data-class-upcoming='["Final schema draft due next Monday", "Review relationship mapping"]'>
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Databases</p>
+                  <h3>CCS DATABASE DESIGN</h3>
+                </div>
+                <span class="tag alt">Review</span>
+              </div>
+              <p class="course-meta">Schema planning • Due next Monday</p>
+              <div class="chip-row">
+                <button class="pill-btn">Schema</button>
+                <button class="pill-btn">Notes</button>
+              </div>
+            </article>
+
+            <article class="course-card clickable" tabindex="0" role="button" data-course-category="Multimedia" data-course-title="WEB DESIGN FUNDAMENTALS" data-course-description="Build modern web pages with layout, typography, and responsive design. Review project guidelines and design principles for your class." data-class-materials='["Visual design brief", "Responsive layout notes", "Typography guide"]' data-class-resources='["Web template samples", "Color palette tools", "Style guide"]' data-class-announcements='["Project brief shared this weekend.", "Design review session on Friday."]' data-class-upcoming='["Start project wireframes", "Submit mood board"]'>
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Multimedia</p>
+                  <h3>WEB DESIGN FUNDAMENTALS</h3>
+                </div>
+                <span class="tag">New</span>
+              </div>
+              <p class="course-meta">Project brief • Start this weekend</p>
+              <div class="chip-row">
+                <button class="pill-btn">Project</button>
+                <button class="pill-btn">Read</button>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <section id="feed" class="content-section">
+          <section class="course-list">
+            <article class="course-card">
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Feed</p>
+                  <h3>CCS Updates</h3>
+                </div>
+                <span class="tag">New</span>
+              </div>
+              <ul class="list">
+                <li>CCS Day preparation is now open for student volunteers.</li>
+                <li>Palakasan practice schedules were posted for all departments.</li>
+                <li>Reminder: submit your team registration before this Friday.</li>
+              </ul>
+            </article>
+          </section>
+        </section>
+
+        <section id="assignments" class="content-section page-content">
+          <div style="margin-bottom: 20px;">
+            <h2 style="color: #4a001f; margin: 0 0 4px 0;">Assignments</h2>
+            <p style="color: #666; font-size: 13px; margin: 0;">View and submit your class activities, tasks, and quizzes.</p>
+          </div>
+          <div id="assignmentsContainer">
+            <p style="color: #888; font-size: 13px;">Loading assignments...</p>
+          </div>
+        </section>
+
+        <section id="calendar" class="content-section">
+          <div id="aaCalendarRoot"></div>
+          <!-- Legacy static calendar markup retained as a source comment only.
+          <section class="course-list">
+            <article class="course-card wide">
+              <div class="course-title-row">
+                <div>
+                  <p class="eyebrow">Calendar</p>
+                  <h3>Monthly Overview</h3>
+                </div>
+                <span class="tag">This Week</span>
+              </div>
+
+              <div class="calendar-card">
+                <div class="calendar-header">
+                  <div>
+                    <h4>July 2026</h4>
+                    <p class="calendar-subtitle">Upcoming deadlines and key school events.</p>
+                  </div>
+                  <span class="calendar-pill">5 Events</span>
+                </div>
+
+                <div class="calendar-legend">
+                  <span><span class="legend-dot overdue"></span> Past due</span>
+                  <span><span class="legend-dot today"></span> Today</span>
+                  <span><span class="legend-dot event"></span> Upcoming</span>
+                </div>
+
+                <div class="calendar-grid">
+                  <div class="day-name">Sun</div>
+                  <div class="day-name">Mon</div>
+                  <div class="day-name">Tue</div>
+                  <div class="day-name">Wed</div>
+                  <div class="day-name">Thu</div>
+                  <div class="day-name">Fri</div>
+                  <div class="day-name">Sat</div>
+
+                  <div class="day muted">28</div>
+                  <div class="day muted">29</div>
+                  <div class="day muted">30</div>
+                  <div class="day overdue">1</div>
+                  <div class="day overdue">2</div>
+                  <div class="day event">3</div>
+                  <div class="day">4</div>
+
+                  <div class="day">5</div>
+                  <div class="day">6</div>
+                  <div class="day">7</div>
+                  <div class="day today">8</div>
+                  <div class="day event">9</div>
+                  <div class="day event">10</div>
+                  <div class="day">11</div>
+
+                  <div class="day">12</div>
+                  <div class="day">13</div>
+                  <div class="day">14</div>
+                  <div class="day">15</div>
+                  <div class="day">16</div>
+                  <div class="day">17</div>
+                  <div class="day">18</div>
+
+                  <div class="day">19</div>
+                  <div class="day">20</div>
+                  <div class="day">21</div>
+                  <div class="day">22</div>
+                  <div class="day">23</div>
+                  <div class="day">24</div>
+                  <div class="day">25</div>
+
+                  <div class="day">26</div>
+                  <div class="day">27</div>
+                  <div class="day">28</div>
+                  <div class="day">29</div>
+                  <div class="day">30</div>
+                  <div class="day">31</div>
+                  <div class="day muted">1</div>
+                </div>
+              </div>
+
+              <div class="calendar-details">
+                <article class="mini-card overdue-card">
+                  <h4>Missed Assignment</h4>
+                  <p><strong>IT Systems Research</strong> • Due Jul 2</p>
+                  <p class="mini-copy">Past due item. Complete it to stay on track.</p>
+                </article>
+                <article class="mini-card upcoming-card">
+                  <h4>Upcoming Activity</h4>
+                  <p><strong>Network Design Prep</strong> • Jul 10</p>
+                  <p class="mini-copy">Plan materials and review your architecture notes.</p>
+                </article>
+                <article class="mini-card assignment-card">
+                  <h4>Next Assignment</h4>
+                  <p><strong>CCS Project Plan</strong> • Due Jul 15</p>
+                  <p class="mini-copy">Draft your proposal and prepare the project outline.</p>
+                </article>
+              </div>
+            </article>
+          </section> -->
+        </section>
+
+        <section id="resources" class="content-section">
+          <div id="aaResourcesRoot"></div>
+        </section>
+
+        <section id="classDetail" class="content-section">
+          <div class="class-dashboard">
+            <div class="class-dashboard-header">
+              <button id="backToClassesBtn" class="ghost-btn">Back to classes</button>
+              <div>
+                <p class="eyebrow" id="detailClassCategory">Class</p>
+                <h2 id="detailClassTitle">Selected Class</h2>
+                <p id="detailClassSubtitle">Keep track of work due and complete class activities.</p>
+                <p class="form-note">Code: <span id="detailClassCode">—</span> <button id="copyDetailCode" class="ghost-btn">Copy</button></p>
+              </div>
+            </div>
+
+            <div class="class-stream-tabs" role="tablist" aria-label="Class navigation">
+              <button id="tabStreamBtn" class="class-stream-tab active" type="button" role="tab" aria-selected="true">Class Stream</button>
+              <button id="tabDetailBtn" class="class-stream-tab" type="button" role="tab" aria-selected="false" hidden>Work Details</button>
+              <button id="tabRecordBtn" class="class-stream-tab" type="button" role="tab" aria-selected="false" hidden>Class Record</button>
+            </div>
+
+            <div id="streamContentArea" class="class-dashboard-grid">
+              <aside class="class-sidebar">
+                <section class="class-card-mini upcoming-panel" aria-labelledby="upcomingHeading">
+                  <p class="eyebrow">To do</p>
+                  <h3 id="upcomingHeading">Upcoming Work</h3>
+                  <ul id="upcomingList" class="upcoming-list"></ul>
+                </section>
+              </aside>
+              <section class="class-work-panel" aria-labelledby="classWorkHeading">
+                <div class="panel-heading">
+                  <div>
+                    <p class="eyebrow">Class stream</p>
+                    <h3 id="classWorkHeading">Class Work</h3>
+                  </div>
+                  <button id="addWorkBtn" class="primary-btn" type="button" hidden><span aria-hidden="true">+</span> Add Work</button>
+                </div>
+                <ul id="classWorkList" class="class-work-list"></ul>
+              </section>
+            </div>
+
+            <section id="classRecordView" class="class-record-view" hidden aria-live="polite">
+              <div id="crRoot"></div>
+            </section>
+
+            <section id="itemDetailView" class="item-detail-view" hidden aria-live="polite">
+              <button id="backToStreamBtn" class="detail-back-btn" type="button">&larr; Back to Class Stream</button>
+              <div class="item-detail-heading">
+                <div id="detailItemIcon" class="detail-item-icon" aria-hidden="true">&#128196;</div>
+                <div>
+                  <h2 id="detailItemTitle">Class work</h2>
+                  <p id="detailItemMeta">Details for this class work item.</p>
+                </div>
+              </div>
+              <div id="detailFileContainer" class="detail-file-container"></div>
+              <section id="studentSubmissionPanel" class="student-submission-panel" hidden aria-labelledby="studentSubmissionTitle">
+                <div class="submission-heading">
+                  <h3 id="studentSubmissionTitle">Your work</h3>
+                  <span id="submissionStatus" class="submission-status assigned">Assigned</span>
+                </div>
+                <p id="submissionGradeNote" class="submission-grade-note" hidden></p>
+                <div id="submissionFileList" class="submission-file-list"></div>
+                <input id="submissionFileInput" type="file" hidden>
+                <button id="addSubmissionFileBtn" class="submission-add-file-btn" type="button">+ Add or create</button>
+                <button id="submitWorkBtn" class="submission-toggle-btn" type="button">Submit</button>
+              </section>
+              <section id="submissionReviewPanel" class="submission-review-panel" hidden aria-labelledby="submissionReviewTitle">
+                <h3 id="submissionReviewTitle">Student submissions</h3>
+                <div id="submissionReviewList" class="submission-review-list"></div>
+              </section>
+              <div class="class-comments">
+                <h3>Class comments</h3>
+                <input type="text" aria-label="Add class comment" placeholder="Add comment..." />
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <div id="uploadModal" class="work-modal hidden" role="dialog" aria-modal="true" aria-labelledby="uploadModalTitle">
+          <div class="work-modal-dialog">
+            <button id="closeModalBtn" class="close-modal" type="button" aria-label="Close">&times;</button>
+            <h3 id="uploadModalTitle">Add New Class Work</h3>
+            <form id="uploadForm" class="work-form" enctype="multipart/form-data">
+              <label>Type
+                <select id="workType" name="type">
+                  <option value="Lesson">Lesson (PDF / Doc / Slide)</option>
+                  <option value="Activity">Activity</option>
+                  <option value="Quiz">Quiz / Assessment</option>
+                </select>
+              </label>
+              <label>Title
+                <input id="workTitle" type="text" required placeholder="e.g. Module 2: Advanced Layouts">
+              </label>
+              <label>Attach file
+                <div id="dropZone" class="file-drop-zone" role="button" tabindex="0" aria-describedby="dropZoneHelp">
+                  <span id="dropZoneText">Drag &amp; drop your file here, or <u>Browse</u></span>
+                  <small id="dropZoneHelp">PDF, DOCX, PPTX, PNG, or ZIP — maximum 25 MB</small>
+                  <input id="fileInput" name="file" type="file" hidden accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.zip">
+                </div>
+              </label>
+              <div class="external-link-divider">— OR EXTERNAL LINK —</div>
+              <label>External link
+                <input id="fileUrl" name="file_link" type="url" placeholder="https://docs.google.com/...">
+              </label>
+              <div id="assessmentFields" class="hidden">
+                <label>Due date
+                  <input id="dueDate" type="date">
+                </label>
+                <label>Total points
+                  <input id="totalPoints" type="number" min="0" value="50">
+                </label>
+              </div>
+              <p id="uploadFormMessage" class="form-note" aria-live="polite"></p>
+              <div class="work-form-actions">
+                <button id="cancelUploadBtn" class="ghost-btn" type="button">Cancel</button>
+                <button id="saveWorkBtn" class="primary-btn" type="submit">Upload</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- Shared widget: available only while an authenticated user session exists. -->
+    <div id="aiChatbotRoot" style="display: none;">
+      <div class="chat-widget fixed-chatbot-wrapper">
+      <button class="chat-toggle" aria-label="Open assistant">💬 Chatbot</button>
+      <div class="chat-panel">
+        <div class="chat-header">
+          <span>AI Study Assistant</span>
+          <button class="chat-close" type="button" aria-label="Close chatbot" title="Close chatbot">&times;</button>
+        </div>
+        <div class="chat-body chat-messages">
+          <div class="bubble message-ai">Hello! I can help summarize lessons, explain topics, and answer questions.</div>
+        </div>
+        <div class="chat-footer">
+          <input id="chatInput" type="text" placeholder="Ask the AI..." aria-label="Chat message" />
+          <button id="sendChatBtn" type="button">Send</button>
+        </div>
+      </div>
+      </div>
+    </div>
+
+    <script src="js/script.js"></script>
+    <script src="js/AIChatbot.js"></script>
+  </body>
+</html>

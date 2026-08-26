@@ -1,5 +1,34 @@
-Backend/uploads/
-Backend/.env
+# ─── Environment / Secrets ───────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
 
-FlowiseApp/node_modules/
+# ─── Uploaded User Files ─────────────────────────────────────────────────────
+**/uploads/
+
+# ─── Node.js ─────────────────────────────────────────────────────────────────
 node_modules/
+**/node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ─── Ngrok Binary ────────────────────────────────────────────────────────────
+ngrok-v3-stable-windows-amd64/
+*.exe
+
+# ─── Build Artifacts ─────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ─── IDE / OS Metadata ───────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+
+# AI / IDE metadata
+.agents/*mcp.json
+.agents/*
