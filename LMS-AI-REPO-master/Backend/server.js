@@ -1,3 +1,5 @@
+const dns = require('dns');
+dns.setDefaultResultOrder('ipv4first');
 const express = require('express');
 const { Pool } = require('pg');
 const cors = require('cors');
@@ -10,12 +12,18 @@ const { OAuth2Client } = require('google-auth-library');
 const { askFlowise } = require('./services/flowise');
 
 const app = express();
+// ngrok/TLS terminates in front of this server. Trust its forwarded protocol so
+// Office for the web receives the public HTTPS document URL, not localhost/HTTP.
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json());
 
 const chatbotIdentitySecret = process.env.CHATBOT_IDENTITY_SECRET;
-// This is a public OAuth client ID. Override it in Backend/.env for each deployment.
-const googleClientId = process.env.GOOGLE_CLIENT_ID || '27578574110-v92r0hvooifo6qrk903j06gp4bqoslm0.apps.googleusercontent.com';
+const defaultGoogleClientId = '27578574110-v92r0hvooifo6qrk903j06gp4bqoslm0.apps.googleusercontent.com';
+const configuredGoogleClientId = String(process.env.GOOGLE_CLIENT_ID || '').trim();
+const googleClientId = /^\d+-[a-z0-9_-]+\.apps\.googleusercontent\.com$/i.test(configuredGoogleClientId)
+  ? configuredGoogleClientId
+  : defaultGoogleClientId;
 const googleAuthClient = new OAuth2Client(googleClientId);
 
 function createAuthToken(user) {
@@ -91,7 +99,7 @@ app.post('/api/chat', async (req, res) => {
 // This avoids hardcoding secrets in frontend source files.
 app.get('/api/config', (_req, res) => {
   res.json({
-    googleClientId: process.env.GOOGLE_CLIENT_ID || '',
+    googleClientId,
   });
 });
 
@@ -122,17 +130,14 @@ const upload = multer({
 });
 app.use('/uploads', express.static(uploadDir));
 
-// ⚠️ Double check these 4 fields!
-if (!process.env.DB_PASSWORD) {
-  console.warn('[WARN] DB_PASSWORD is not set in .env — database connection will likely fail.');
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL must be configured for the Supabase database connection.');
 }
 
 const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  database: process.env.DB_NAME || 'AI-LMS',
-  password: process.env.DB_PASSWORD,
-  port: Number(process.env.DB_PORT || 5432),
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+  max: 10,
 });
 // ==========================================
 // SUPER ADMIN: CREATE USER ACCOUNT WITH PASSWORD
@@ -236,9 +241,25 @@ app.post('/api/auth/google', async (req, res) => {
 
     let result = await pool.query('SELECT student_id, name, email, role FROM students WHERE LOWER(email) = $1', [email]);
     let user = result.rows[0];
+    const sid = email.split('@')[0];
+    const normalizedIdentifier = sid.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normalizedStoredName = String(user?.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const normalizedGoogleName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const hasPlaceholderName = !normalizedStoredName || normalizedStoredName === normalizedIdentifier;
+
+    // Pre-assigned accounts initially use the email prefix as a placeholder name.
+    // Replace only that placeholder with the institutional Google profile name; a
+    // name intentionally entered by an administrator is never overwritten.
+    if (user && name && hasPlaceholderName && normalizedGoogleName !== normalizedIdentifier) {
+      const updated = await pool.query(
+        'UPDATE students SET name = $1 WHERE LOWER(email) = $2 RETURNING student_id, name, email, role',
+        [name, email]
+      );
+      user = updated.rows[0];
+    }
+
     if (!user) {
       const role = 'student';
-      const sid = email.split('@')[0];
       const inserted = await pool.query(
         `INSERT INTO students (student_id, name, email, role, password)
          VALUES ($1, $2, $3, $4, 'google-sso')
@@ -368,6 +389,18 @@ const classworkSchemaReady = pool.query(`
 // Keep track of the instructor who created each course for role-based lists.
 const courseSchemaReady = pool.query('ALTER TABLE courses ADD COLUMN IF NOT EXISTS teacher_id INTEGER');
 courseSchemaReady.catch((error) => console.error('Error preparing course ownership:', error));
+
+const classCommentsSchemaReady = pool.query(`
+  CREATE TABLE IF NOT EXISTS class_comments (
+    comment_id SERIAL PRIMARY KEY,
+    course_id INT NOT NULL REFERENCES courses(course_id) ON DELETE CASCADE,
+    author_id VARCHAR(50) NOT NULL,
+    content TEXT NOT NULL CHECK (char_length(content) BETWEEN 1 AND 1000),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+`)
+  .then(() => console.log('Class comments table is ready!'))
+  .catch((error) => console.error('Error preparing class comments:', error));
 
 // Auto-create submissions table on startup
 const submissionsSchemaReady = pool.query(`
@@ -629,10 +662,12 @@ app.post('/api/courses/unenroll', async (req, res) => {
 // Instructor-only enrollment removal. This removes one student without deleting the class.
 app.delete('/api/courses/:courseId/students/:studentId', async (req, res) => {
   const courseId = Number.parseInt(req.params.courseId, 10);
-  const studentId = Number.parseInt(req.params.studentId, 10);
+  // Institutional student IDs can contain letters (for example, fcp33530),
+  // so preserve the identifier instead of coercing it to a number.
+  const studentId = String(req.params.studentId || '').trim();
   const teacherId = Number.parseInt(req.query.teacher_id, 10);
 
-  if (!Number.isInteger(courseId) || !Number.isInteger(studentId) || !Number.isInteger(teacherId)) {
+  if (!Number.isInteger(courseId) || !studentId || !Number.isInteger(teacherId)) {
     return res.status(400).json({ error: 'A valid course ID, student ID, and teacher ID are required.' });
   }
 
@@ -679,7 +714,7 @@ async function createClassHandler(req, res) {
     instructor,
     section,
     subText,
-    teacherId = 1,
+    teacherId,
   } = req.body;
 
   const trimmedTitle = title?.trim();
@@ -689,6 +724,7 @@ async function createClassHandler(req, res) {
   const trimmedInstructor = instructor?.trim();
   const trimmedSection = section?.trim();
   const trimmedSubText = subText?.trim();
+  const assignedTeacherId = Number.parseInt(teacherId, 10);
 
   if (!trimmedTitle) {
     return res.status(400).json({ error: 'Class title is required.' });
@@ -734,7 +770,12 @@ async function createClassHandler(req, res) {
       `INSERT INTO courses (code, title, class_code, status, teacher_id)
        VALUES ($1, $2, $3, 'Active', $4)
        RETURNING *`,
-      [normalizedCourseCode, trimmedTitle, generatedClassCode, teacherId]
+      // Creating a class only creates the class record.  Students (and staff
+      // joining another class) are added to enrollments exclusively through
+      // the join endpoints.  An omitted instructor must remain unassigned;
+      // never fall back to a real account such as ID 1.
+      [normalizedCourseCode, trimmedTitle, generatedClassCode,
+        Number.isInteger(assignedTeacherId) ? assignedTeacherId : null]
     );
     const courseRecord = courseResult.rows[0];
 
@@ -772,9 +813,9 @@ app.post('/api/courses', createClassHandler);
 // Deans see all classes; teachers see assigned and joined classes; students see joined classes.
 app.get('/api/courses', async (req, res) => {
   const role = String(req.query.role || 'student').toLowerCase();
-  const userId = Number.parseInt(req.query.user_id, 10);
+  const userId = String(req.query.user_id || '').trim();
 
-  if (!Number.isInteger(userId)) {
+  if (!userId) {
     return res.status(400).json({ error: 'A valid user ID is required.' });
   }
 
@@ -782,9 +823,11 @@ app.get('/api/courses', async (req, res) => {
     await courseSchemaReady;
     if (role === 'dean' || role === 'admin' || role === 'superadmin') {
       const result = await pool.query(
-        `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text
+        `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text,
+                COALESCE(NULLIF(TRIM(instructor.name), ''), '') AS instructor_name
          FROM courses c
          LEFT JOIN lessons l ON l.course_id = c.course_id
+         LEFT JOIN students instructor ON instructor.student_id::text = c.teacher_id::text
          ORDER BY c.course_id DESC`
       );
       return res.json(result.rows);
@@ -792,28 +835,32 @@ app.get('/api/courses', async (req, res) => {
 
     if (role === 'teacher' || role === 'instructor') {
       const result = await pool.query(
-        `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text
+        `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text,
+                COALESCE(NULLIF(TRIM(instructor.name), ''), '') AS instructor_name
          FROM courses c
          LEFT JOIN lessons l ON l.course_id = c.course_id
-         WHERE c.teacher_id = $1
+         LEFT JOIN students instructor ON instructor.student_id::text = c.teacher_id::text
+         WHERE c.teacher_id::text = $1::text
             OR c.course_id IN (
               SELECT e.course_id FROM enrollments e WHERE e.student_id::text = $2
             )
          ORDER BY c.course_id DESC`,
-        [userId, String(userId)]
+        [userId, userId]
       );
       return res.json(result.rows);
     }
 
     const result = await pool.query(
-      `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text
+      `SELECT c.*, COALESCE(l.sub_text, '') AS sub_text,
+              COALESCE(NULLIF(TRIM(instructor.name), ''), '') AS instructor_name
        FROM courses c
        LEFT JOIN lessons l ON l.course_id = c.course_id
+       LEFT JOIN students instructor ON instructor.student_id::text = c.teacher_id::text
        WHERE c.course_id IN (
          SELECT e.course_id FROM enrollments e WHERE e.student_id::text = $1
        )
        ORDER BY c.course_id DESC`,
-      [String(userId)]
+      [userId]
     );
     return res.json(result.rows);
   } catch (error) {
@@ -824,6 +871,69 @@ app.get('/api/courses', async (req, res) => {
 
 // GET ASSIGNMENTS (Task, Activity, Quiz ONLY — Safe SQL Join)
 // GET ASSIGNMENTS (Instructor Focus)
+app.get('/api/courses/:courseId/comments', async (req, res) => {
+  const courseId = Number.parseInt(req.params.courseId, 10);
+  if (!Number.isInteger(courseId)) return res.status(400).json({ error: 'A valid course ID is required.' });
+
+  try {
+    await classCommentsSchemaReady;
+    const result = await pool.query(
+      `SELECT cc.comment_id, cc.course_id, cc.author_id, cc.content, cc.created_at,
+              COALESCE(NULLIF(TRIM(s.name), ''), cc.author_id::text) AS author_name
+       FROM class_comments cc
+       LEFT JOIN students s ON s.student_id::text = cc.author_id::text
+       WHERE cc.course_id = $1
+       ORDER BY cc.created_at ASC, cc.comment_id ASC`,
+      [courseId]
+    );
+    return res.json(result.rows);
+  } catch (error) {
+    console.error('Error loading class comments:', error.message);
+    return res.status(500).json({ error: 'Unable to load class comments.' });
+  }
+});
+
+// All signed-in LMS roles can participate in a class discussion.  We validate
+// the author against the LMS account table rather than requiring a short-lived
+// chatbot token, which caused otherwise signed-in users to receive "Unauthorized".
+app.post('/api/courses/:courseId/comments', async (req, res) => {
+  const courseId = Number.parseInt(req.params.courseId, 10);
+  const content = String(req.body?.content || '').trim();
+  const authorId = String(req.body?.author_id || '').trim();
+  if (!Number.isInteger(courseId)) return res.status(400).json({ error: 'A valid course ID is required.' });
+  if (!content || content.length > 1000) return res.status(400).json({ error: 'Comments must be between 1 and 1,000 characters.' });
+  if (!authorId) return res.status(401).json({ error: 'Please sign in before posting a comment.' });
+
+  try {
+    await classCommentsSchemaReady;
+    const authorResult = await pool.query(
+      `SELECT student_id, name, email, role
+       FROM students
+       WHERE student_id::text = $1
+       LIMIT 1`,
+      [authorId]
+    );
+    const author = authorResult.rows[0];
+    const role = String(author?.role || '').toLowerCase().replace(/\s+/g, '');
+    if (!author || !['student', 'teacher', 'instructor', 'dean', 'admin', 'superadmin'].includes(role)) {
+      return res.status(403).json({ error: 'Your LMS account is not allowed to post class comments.' });
+    }
+    const result = await pool.query(
+      `INSERT INTO class_comments (course_id, author_id, content)
+       VALUES ($1, $2, $3)
+       RETURNING comment_id, course_id, author_id, content, created_at`,
+      [courseId, String(author.student_id), content]
+    );
+    return res.status(201).json({
+      ...result.rows[0],
+      author_name: author.name || author.email || String(author.student_id),
+    });
+  } catch (error) {
+    console.error('Error posting class comment:', error.message);
+    return res.status(500).json({ error: 'Unable to post the comment.' });
+  }
+});
+
 app.get('/api/assignments', assignmentsPageHandler);
 
 // POST: Add an Activity, Task, or Quiz inside a class.
@@ -1025,10 +1135,11 @@ app.post('/api/assignments/:assignmentId/submissions/:studentId/grade', async (r
 
 // POST /api/classes/join
 app.post('/api/classes/join', async (req, res) => {
-  const { studentId, classCode } = req.body;
+  const studentId = String(req.body?.studentId || '').trim();
+  const { classCode } = req.body;
   const normalizedCode = classCode?.trim().toUpperCase();
 
-  if (!Number.isInteger(studentId) || !normalizedCode) {
+  if (!studentId || !normalizedCode) {
     return res.status(400).json({ error: 'Student ID and class code are required.' });
   }
 
@@ -1071,10 +1182,10 @@ app.post('/api/classes/join', async (req, res) => {
 // Alias for the role-based dashboard flow. The existing /api/classes/join
 // endpoint remains available for compatibility with the current modal.
 app.post('/api/courses/join', async (req, res) => {
-  const studentId = Number.parseInt(req.body?.student_id, 10);
+  const studentId = String(req.body?.student_id || '').trim();
   const normalizedCode = String(req.body?.class_code || '').trim().toUpperCase();
 
-  if (!Number.isInteger(studentId) || !normalizedCode) {
+  if (!studentId || !normalizedCode) {
     return res.status(400).json({ error: 'Student ID and class code are required.' });
   }
 
@@ -1105,6 +1216,32 @@ app.post('/api/courses/join', async (req, res) => {
   }
 });
 
+// GET /api/courses/:courseId/members
+// A lightweight roster for the class-members control. Grades remain available
+// only from the separate class-record endpoint.
+app.get('/api/courses/:courseId/members', async (req, res) => {
+  const courseId = Number.parseInt(req.params.courseId, 10);
+  if (!Number.isInteger(courseId)) return res.status(400).json({ error: 'A valid course ID is required.' });
+
+  try {
+    const result = await pool.query(
+      `SELECT e.student_id,
+              COALESCE(NULLIF(TRIM(s.name), ''), NULLIF(TRIM(s.first_name), ''), 'Student #' || e.student_id::text) AS student_name,
+              s.year_level
+       FROM enrollments e
+       LEFT JOIN students s ON s.student_id::text = e.student_id::text
+       WHERE e.course_id = $1
+         AND COALESCE(LOWER(TRIM(s.role)), 'student') = 'student'
+       ORDER BY student_name`,
+      [courseId]
+    );
+    return res.json({ members: result.rows });
+  } catch (error) {
+    console.error('Error loading class members:', error.message);
+    return res.status(500).json({ error: 'Failed to load class members.' });
+  }
+});
+
 // GET /api/courses/:courseId/record
 // Returns the enrolled roster and the grades stored for each class assignment.
 app.get('/api/courses/:courseId/record', async (req, res) => {
@@ -1115,12 +1252,13 @@ app.get('/api/courses/:courseId/record', async (req, res) => {
     const [studentsResult, assignmentsResult, scoresResult] = await Promise.all([
       pool.query(
         `SELECT e.student_id,
-                COALESCE(NULLIF(TRIM(s.first_name), ''), 'Student #' || e.student_id::text) AS student_name,
+                COALESCE(NULLIF(TRIM(s.name), ''), NULLIF(TRIM(s.first_name), ''), 'Student #' || e.student_id::text) AS student_name,
                 s.academic_year,
                 s.year_level
          FROM enrollments e
          LEFT JOIN students s ON s.student_id::text = e.student_id::text
          WHERE e.course_id = $1
+           AND COALESCE(LOWER(TRIM(s.role)), 'student') = 'student'
          ORDER BY student_name`,
         [courseId]
       ),
@@ -1217,8 +1355,9 @@ app.get('/api/courses/:courseId/full-details', async (req, res) => {
 // POST /api/courses/:courseId/classwork
 app.post('/api/courses/:courseId/classwork', upload.single('file'), async (req, res) => {
   const courseId = Number.parseInt(req.params.courseId, 10);
-  const { type, title, file_link: fileLink, dueDate, totalPoints } = req.body || {};
+  const { type, title, description, file_link: fileLink, dueDate, totalPoints } = req.body || {};
   const documentUrl = req.file ? `/uploads/${req.file.filename}` : String(fileLink || '').trim();
+  const workDescription = String(description || '').trim();
 
   if (!Number.isInteger(courseId)) {
     return res.status(400).json({ error: 'A valid course ID is required.' });
@@ -1227,6 +1366,7 @@ app.post('/api/courses/:courseId/classwork', upload.single('file'), async (req, 
   if (!['Lesson', 'Task', 'Activity', 'Quiz'].includes(type) || !String(title || '').trim()) {
     return res.status(400).json({ error: 'Choose a type and enter a title.' });
   }
+  if (workDescription.length > 2000) return res.status(400).json({ error: 'Description must be 2,000 characters or fewer.' });
 
   try {
     const courseResult = await pool.query(
@@ -1238,22 +1378,22 @@ app.post('/api/courses/:courseId/classwork', upload.single('file'), async (req, 
     }
 
     if (type === 'Lesson' || type === 'Resource') {
-      await classMaterialsNullableUrlReady;
+      await Promise.all([classMaterialsNullableUrlReady, classWorkDescriptionSchemaReady]);
       const result = await pool.query(
-        `INSERT INTO class_materials (course_id, title, pdf_url)
-         VALUES ($1, $2, $3) RETURNING *`,
-        [courseId, title.trim(), documentUrl || null]
+        `INSERT INTO class_materials (course_id, title, description, pdf_url)
+         VALUES ($1, $2, $3, $4) RETURNING *`,
+        [courseId, title.trim(), workDescription || null, documentUrl || null]
       );
       return res.status(201).json({ message: 'Class work added successfully.', item: result.rows[0] });
     }
 
     // This keeps document links available for tasks, activities, and quizzes too.
-    await pool.query('ALTER TABLE class_assignments ADD COLUMN IF NOT EXISTS file_url TEXT');
+    await classWorkDescriptionSchemaReady;
     const points = Number(totalPoints);
     const result = await pool.query(
-      `INSERT INTO class_assignments (course_id, title, type, due_date, total_points, file_url)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [courseId, title.trim(), type, dueDate || null, Number.isFinite(points) ? points : 50, documentUrl || null]
+      `INSERT INTO class_assignments (course_id, title, description, type, due_date, total_points, file_url)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+      [courseId, title.trim(), workDescription || null, type, dueDate || null, Number.isFinite(points) ? points : 50, documentUrl || null]
     );
     return res.status(201).json({ message: 'Class work added successfully.', item: result.rows[0] });
   } catch (error) {
@@ -1289,6 +1429,108 @@ app.delete('/api/materials/:id', async (req, res) => {
   } catch (error) {
     console.error('Error deleting material:', error.message);
     return res.status(500).json({ error: 'Failed to delete material.' });
+  }
+});
+
+// Serve an uploaded document inline. Class views use this endpoint rather than
+// linking straight to /uploads, which can make browsers save the file instead.
+function sendUploadedFileInline(res, url, title) {
+  if (!url.startsWith('/uploads/')) return res.redirect(url);
+
+  const filePath = path.join(uploadDir, path.basename(url));
+  const extension = path.extname(filePath);
+  const baseName = String(title || 'document')
+    .replace(/[^a-z0-9._ -]/gi, '-')
+    .replace(/[. ]+$/, '') || 'document';
+  const fileName = baseName.toLowerCase().endsWith(extension.toLowerCase())
+    ? baseName
+    : `${baseName}${extension}`;
+  return res.sendFile(filePath, {
+    headers: { 'Content-Disposition': `inline; filename="${fileName}"` },
+  });
+}
+
+function sendDocumentPreview(res, req, title, viewPath, fileUrl) {
+  const safeTitle = String(title || 'Document').replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[character]));
+  const protocol = req.protocol === 'https' ? 'https' : 'http';
+  const sourceUrl = `${protocol}://${req.get('host')}${viewPath}`;
+  const extension = path.extname(String(fileUrl || '').split('?')[0]).toLowerCase();
+  const canOpenDirectly = ['.pdf', '.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(extension);
+  const viewerUrl = canOpenDirectly
+    ? viewPath
+    : `https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(sourceUrl)}`;
+  const isOfficeFile = ['.doc', '.docx', '.ppt', '.pptx', '.xls', '.xlsx'].includes(extension);
+  const content = isOfficeFile || canOpenDirectly
+    ? `<iframe title="${safeTitle}" src="${viewerUrl}" allowfullscreen></iframe>`
+    : '<p class="notice">This file type cannot be previewed in the browser.</p>';
+
+  return res.type('html').send(`<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${safeTitle} — IMCC LMS</title>
+<style>body{margin:0;background:#171a1b;color:#f4f4f4;font:16px Arial,sans-serif}.bar{height:64px;display:flex;align-items:center;gap:12px;padding:0 24px;background:#252829;box-sizing:border-box}.badge{background:#d95a70;border-radius:7px;padding:8px 10px;font-weight:800}.name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}main{height:calc(100vh - 64px);display:grid;place-items:center}iframe{width:100%;height:100%;border:0;background:#fff}.notice{padding:24px;background:#292d2f;border-radius:10px}</style>
+</head><body><header class="bar"><span class="badge">FILE</span><span class="name">${safeTitle}</span></header><main>${content}</main></body></html>`);
+}
+
+// VIEW a local resource inline. This intentionally uses Content-Disposition:
+// inline so the browser previews supported types (especially PDFs) instead of
+// treating the View action as a download.
+app.get('/api/materials/:id/view', async (req, res) => {
+  const materialId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(materialId)) return res.status(400).json({ error: 'A valid material ID is required.' });
+  try {
+    const result = await pool.query('SELECT title, pdf_url FROM class_materials WHERE material_id = $1', [materialId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Resource not found.' });
+    const { title, pdf_url: url } = result.rows[0];
+    if (!url) return res.status(400).json({ error: 'No file is attached to this resource.' });
+    return sendUploadedFileInline(res, url, title);
+  } catch (error) {
+    console.error('Error viewing resource:', error.message);
+    return res.status(500).json({ error: 'Failed to view resource.' });
+  }
+});
+
+// Google-Classroom-style preview shell. PDFs/images render locally; Office
+// documents render through Office for the web when this LMS is publicly hosted.
+app.get('/api/materials/:id/preview', async (req, res) => {
+  const materialId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(materialId)) return res.status(400).json({ error: 'A valid material ID is required.' });
+  try {
+    const result = await pool.query('SELECT title, pdf_url FROM class_materials WHERE material_id = $1', [materialId]);
+    if (result.rowCount === 0 || !result.rows[0].pdf_url) return res.status(404).json({ error: 'Resource file not found.' });
+    return sendDocumentPreview(res, req, result.rows[0].title, `/api/materials/${materialId}/view`, result.rows[0].pdf_url);
+  } catch (error) {
+    console.error('Error previewing resource:', error.message);
+    return res.status(500).json({ error: 'Failed to preview resource.' });
+  }
+});
+
+// VIEW attached task, activity, and quiz documents inline.
+app.get('/api/assignments/:id/view', async (req, res) => {
+  const assignmentId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(assignmentId)) return res.status(400).json({ error: 'A valid assignment ID is required.' });
+  try {
+    const result = await pool.query('SELECT title, file_url FROM class_assignments WHERE assignment_id = $1', [assignmentId]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Assignment not found.' });
+    const { title, file_url: url } = result.rows[0];
+    if (!url) return res.status(400).json({ error: 'No file is attached to this assignment.' });
+    return sendUploadedFileInline(res, url, title);
+  } catch (error) {
+    console.error('Error viewing assignment:', error.message);
+    return res.status(500).json({ error: 'Failed to view assignment file.' });
+  }
+});
+
+app.get('/api/assignments/:id/preview', async (req, res) => {
+  const assignmentId = Number.parseInt(req.params.id, 10);
+  if (!Number.isInteger(assignmentId)) return res.status(400).json({ error: 'A valid assignment ID is required.' });
+  try {
+    const result = await pool.query('SELECT title, file_url FROM class_assignments WHERE assignment_id = $1', [assignmentId]);
+    if (result.rowCount === 0 || !result.rows[0].file_url) return res.status(404).json({ error: 'Assignment file not found.' });
+    return sendDocumentPreview(res, req, result.rows[0].title, `/api/assignments/${assignmentId}/view`, result.rows[0].file_url);
+  } catch (error) {
+    console.error('Error previewing assignment:', error.message);
+    return res.status(500).json({ error: 'Failed to preview assignment.' });
   }
 });
 
@@ -1341,9 +1583,9 @@ function normalizeRole(role) {
 
 async function assignmentsPageHandler(req, res) {
   const role = normalizeRole(req.query.role);
-  const userId = Number.parseInt(req.query.user_id, 10);
+  const userId = String(req.query.user_id || '').trim();
 
-  if (!Number.isInteger(userId)) {
+  if (!userId) {
     return res.status(400).json({ error: 'A valid user ID is required.' });
   }
 
@@ -1355,7 +1597,7 @@ async function assignmentsPageHandler(req, res) {
       ? null
       : (await pool.query(
         role === 'instructor'
-          ? `SELECT course_id FROM courses WHERE teacher_id = $1::int
+          ? `SELECT course_id FROM courses WHERE teacher_id::text = $1::text
              UNION
              SELECT course_id FROM enrollments WHERE student_id::text = $1::text`
           : 'SELECT course_id FROM enrollments WHERE student_id::text = $1::text',
@@ -1432,16 +1674,16 @@ const calendarEventsSchemaReady = pool.query(`
 async function calendarCourseIds(role, userId) {
   if (role === 'admin') return null;
   const query = role === 'instructor'
-    ? `SELECT course_id FROM courses WHERE teacher_id = $1::int UNION SELECT course_id FROM enrollments WHERE student_id::text = $1::text`
+    ? `SELECT course_id FROM courses WHERE teacher_id::text = $1::text UNION SELECT course_id FROM enrollments WHERE student_id::text = $1::text`
     : 'SELECT course_id FROM enrollments WHERE student_id::text = $1::text';
   return (await pool.query(query, [userId])).rows.map((row) => row.course_id);
 }
 
 app.get('/api/pages/calendar', async (req, res) => {
   const role = normalizeRole(req.query.role);
-  const userId = Number.parseInt(req.query.user_id, 10);
+  const userId = String(req.query.user_id || '').trim();
   const month = String(req.query.month || '');
-  if (!Number.isInteger(userId) || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'A valid user ID and month are required.' });
+  if (!userId || !/^\d{4}-\d{2}$/.test(month)) return res.status(400).json({ error: 'A valid user ID and month are required.' });
   try {
     await calendarEventsSchemaReady;
     const courseIds = await calendarCourseIds(role, userId);
@@ -1487,10 +1729,18 @@ const classMaterialsNullableUrlReady = pool.query(
 ).then(() => console.log('Class materials can be saved without a file.'))
   .catch((error) => console.error('Error updating class materials schema:', error.message));
 
+// Descriptions are optional for all lesson and assignment types. The migration
+// keeps existing databases compatible without a manual schema update.
+const classWorkDescriptionSchemaReady = Promise.all([
+  pool.query('ALTER TABLE class_materials ADD COLUMN IF NOT EXISTS description TEXT'),
+  pool.query('ALTER TABLE class_assignments ADD COLUMN IF NOT EXISTS description TEXT'),
+  pool.query('ALTER TABLE class_assignments ADD COLUMN IF NOT EXISTS file_url TEXT'),
+]).catch((error) => console.error('Error updating class work description schema:', error.message));
+
 async function resourcesCourseIds(role, userId) {
   if (['admin', 'dean', 'superadmin'].includes(role)) return null;
   const query = ['instructor', 'teacher'].includes(role)
-    ? `SELECT course_id FROM courses WHERE teacher_id = $1::int
+    ? `SELECT course_id FROM courses WHERE teacher_id::text = $1::text
        UNION SELECT course_id FROM enrollments WHERE student_id::text = $1::text`
     : 'SELECT course_id FROM enrollments WHERE student_id::text = $1::text';
   return (await pool.query(query, [userId])).rows.map((row) => row.course_id);
@@ -1498,8 +1748,8 @@ async function resourcesCourseIds(role, userId) {
 
 app.get('/api/pages/resources', async (req, res) => {
   const role = String(req.query.role || 'student').toLowerCase().replace(/\s+/g, '');
-  const userId = Number.parseInt(req.query.user_id, 10);
-  if (!Number.isInteger(userId)) return res.status(400).json({ error: 'A valid user ID is required.' });
+  const userId = String(req.query.user_id || '').trim();
+  if (!userId) return res.status(400).json({ error: 'A valid user ID is required.' });
   try {
     const scope = await resourcesCourseIds(role, userId);
     const baseQuery = `SELECT m.material_id, m.title, m.pdf_url, c.title AS course_title, c.code AS course_code
@@ -1516,8 +1766,8 @@ app.get('/api/pages/resources', async (req, res) => {
 
 app.get('/api/pages/my-classes', async (req, res) => {
   const role = String(req.query.role || 'student').toLowerCase().replace(/\s+/g, '');
-  const userId = Number.parseInt(req.query.user_id, 10);
-  if (!Number.isInteger(userId)) return res.status(400).json({ error: 'A valid user ID is required.' });
+  const userId = String(req.query.user_id || '').trim();
+  if (!userId) return res.status(400).json({ error: 'A valid user ID is required.' });
   try {
     const scope = await resourcesCourseIds(role, userId);
     const result = scope === null

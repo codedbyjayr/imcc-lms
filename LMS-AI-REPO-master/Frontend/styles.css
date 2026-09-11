@@ -490,6 +490,11 @@ button:hover {
   box-shadow: 0 10px 24px rgba(231, 51, 138, 0.12);
 }
 
+/* Do not briefly show the legacy placeholder cards before live classes load. */
+#coursesContainer[data-loading="true"] .course-card {
+  display: none;
+}
+
 .main-content {
   padding: 28px 32px;
   overflow-y: auto;
@@ -572,12 +577,23 @@ p {
 
 .topbar-actions {
   margin-left: auto;
-  justify-content: flex-end;
+  display: grid;
+  justify-items: end;
   gap: 10px;
 }
 
-.topbar-actions > button,
-.topbar-actions .role-indicator {
+.account-actions,
+.class-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.account-actions > button,
+.account-actions .role-indicator,
+.class-actions > button {
   flex: 0 0 auto;
 }
 
@@ -614,6 +630,12 @@ p {
 
 .profile-label {
   font-size: 0.95rem;
+}
+
+.optional-field {
+  color: var(--muted);
+  font-size: 0.82em;
+  font-weight: 500;
 }
 
 .primary-btn {
@@ -881,7 +903,7 @@ p {
   gap: 16px;
   padding: 14px 16px;
   border: 1px solid rgba(245, 167, 204, 0.3);
-  border-radius: 14px;
+  border-radius: 8px;
   background: #fff9fc;
   cursor: pointer;
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
@@ -1033,6 +1055,7 @@ p {
 
 .item-detail-heading h2 { margin: 0; color: #31101f; font-size: 1.35rem; }
 .item-detail-heading p { margin: 5px 0 0; color: var(--muted); font-size: 0.88rem; }
+.item-detail-heading .detail-item-description { max-width: 720px; color: #5f4754; line-height: 1.45; white-space: pre-wrap; }
 
 .detail-file-container { color: var(--muted); font-size: 0.9rem; }
 
@@ -1100,6 +1123,17 @@ p {
 .class-comments { margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; }
 .class-comments h3 { margin: 0 0 10px; color: #4a1730; font-size: 0.95rem; }
 .class-comments input { box-sizing: border-box; width: 100%; padding: 10px 14px; border: 1px solid #e0e0e0; border-radius: 20px; font: inherit; }
+.class-comments-list { display: grid; gap: 10px; margin-bottom: 12px; }
+.class-comments-empty { margin: 0; color: #786875; font-size: 0.88rem; }
+.class-comment-item { padding: 11px 13px; border: 1px solid #f0dce5; border-radius: 11px; background: #fffafb; }
+.class-comment-item strong { color: #561632; font-size: 0.88rem; }
+.class-comment-item time { display: block; margin-top: 2px; color: #8d7481; font-size: 0.74rem; }
+.class-comment-item p { margin: 7px 0 0; color: #3f3440; line-height: 1.45; white-space: pre-wrap; }
+.class-comment-form { display: flex; gap: 8px; }
+.class-comment-form button { flex: 0 0 auto; padding: 10px 16px; border: 0; border-radius: 20px; background: #6c163c; color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.class-comment-form button:disabled { cursor: wait; opacity: 0.65; }
+.class-comment-message { margin: 8px 0 0; color: #28704a; font-size: 0.82rem; }
+.class-comment-message.error { color: #bc2f34; }
 
 .work-modal {
   position: fixed;
@@ -1143,7 +1177,8 @@ p {
 }
 
 .work-form input,
-.work-form select {
+.work-form select,
+.work-form textarea {
   width: 100%;
   box-sizing: border-box;
   padding: 10px 12px;
@@ -1151,6 +1186,11 @@ p {
   border-radius: 10px;
   color: #3a1428;
   font: inherit;
+}
+
+.work-form textarea {
+  min-height: 78px;
+  resize: vertical;
 }
 
 .file-drop-zone {
@@ -1186,6 +1226,36 @@ p {
   margin-top: 12px;
 }
 
+/* Keep the activity/quiz form usable on short screens. The form scrolls while
+   its action buttons stay visible at the bottom of the dialog. */
+.work-modal {
+  padding: 16px;
+}
+
+.work-modal-dialog {
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.work-form {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 2px 4px 0;
+}
+
+.work-form-actions {
+  position: sticky;
+  bottom: 0;
+  margin-top: 4px;
+  padding: 12px 0 2px;
+  border-top: 1px solid #f3dce6;
+  background: #fff;
+}
+
 .class-record-view { margin-top: 20px; }
 .class-record-tabs { display: flex; gap: 8px; border-bottom: 1px solid #ead7df; margin-bottom: 18px; }
 .class-record-tab { border: 0; border-bottom: 3px solid transparent; background: transparent; padding: 10px 12px; color: #6b3d50; font: inherit; font-weight: 700; cursor: pointer; }
@@ -1209,7 +1279,8 @@ p {
   .login-card, .login-field input, .login-field select, .modal-content,
   .notification-card, .notification-item, #classCodeInput, .upload-block input,
   .upload-block textarea, .nav-btn, .topbar, .hero-card, .course-card,
-  .class-dashboard, .class-card-mini, .class-work-panel, .class-work-item,
+  .class-dashboard, .class-dashboard-header, .class-card-mini, .class-main-panel,
+  .class-work-panel, .class-work-item, .class-stream-tabs, .class-stream-tab,
   .work-modal-dialog, .work-form input, .work-form select, .file-drop-zone,
   .student-submission-panel, .submission-empty, .submission-file,
   .submission-add-file-btn, .submission-toggle-btn, .submission-review-panel,
@@ -1364,24 +1435,58 @@ p {
 .role-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  border: 1px solid #f8bbd0;
-  border-radius: 20px;
-  background: #fff0f5;
-  color: #880e4f;
-  font-size: 0.69rem;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  font-size: 0.92rem;
   font-weight: 700;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .role-indicator strong {
-  color: #d81b60;
-  font-size: 0.75rem;
+  color: #fff;
+  font-size: 0.92rem;
   font-weight: 800;
   letter-spacing: normal;
   text-transform: none;
+}
+
+.logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.52);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.logout-btn:hover,
+.logout-btn:focus-visible { background: rgba(255, 255, 255, 0.28); }
+
+.signout-icon {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+/* Class actions are the main actions in the lower header row. */
+.class-actions .primary-btn,
+.class-actions .profile-settings-btn {
+  min-height: 50px;
+  padding: 11px 18px;
+  font-size: 1rem;
 }
 
 body.joined-class-view #createClassBtn {
@@ -1432,7 +1537,7 @@ body.joined-class-view #createClassBtn {
 
 .calendar-card {
   border: 1px solid rgba(245, 145, 196, 0.4);
-  border-radius: 24px;
+  border-radius: 8px;
   padding: 22px;
   margin: 10px 0 16px;
   background: linear-gradient(180deg, #fff3f8, #ffe3f2);
@@ -1509,10 +1614,10 @@ body.joined-class-view #createClassBtn {
     letter-spacing: 0.04em;
   }
 
-  .day {
+.day {
     text-align: center;
     padding: 8px 0;
-    border-radius: 14px;
+    border-radius: 8px;
     background: #fff;
     border: 1px solid #f4d2e3;
     color: var(--text);
@@ -1987,6 +2092,11 @@ body.joined-class-view #createClassBtn {
   .topbar-actions {
     width: 100%;
     margin-left: 0;
+    justify-items: start;
+  }
+
+  .account-actions,
+  .class-actions {
     justify-content: flex-start;
   }
 
@@ -2008,10 +2118,7 @@ body.joined-class-view #createClassBtn {
     gap: 8px;
   }
 
-  .topbar-actions .role-indicator {
-    flex-basis: 100%;
-    width: max-content;
-  }
+  .account-actions { gap: 8px; }
 }
 
 /* Final radius override: use sharp, consistent corners for rectangular UI. */
@@ -2283,6 +2390,80 @@ body.admin-account-view #coursesContainer {
   display: none !important;
 }
 
+.class-dashboard-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.class-dashboard-class-info { position: relative; min-width: 0; padding-right: 36px; }
+.class-header-kicker { display: flex; align-items: center; gap: 8px; }
+.class-header-kicker .eyebrow { margin: 0; }
+
+.class-members-btn {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #efabc5;
+  border-radius: 8px;
+  background: #fff;
+  color: #b51e59;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 3px 9px rgba(181, 30, 89, 0.07);
+}
+
+.class-members-btn:hover,
+.class-members-btn:focus-visible { background: #fff0f6; }
+.class-members-btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+.class-members-overlay {
+  position: fixed;
+  z-index: 10020;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(66, 16, 40, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.class-members-dialog {
+  width: min(480px, 100%);
+  max-height: min(620px, calc(100vh - 40px));
+  overflow: auto;
+  border: 1px solid #f0cedc;
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(66, 16, 40, 0.28);
+}
+
+.class-members-dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid #f6dce7; }
+.class-members-dialog-head > div { display: flex; align-items: center; gap: 10px; }
+.class-members-dialog h2 { margin: 0; color: #571a38; font-size: 1.15rem; }
+.class-members-icon { font-size: 1.35rem; }
+.class-members-close { width: 34px; height: 34px; border: 0; border-radius: 6px; background: #fff0f6; color: #b51e59; font-size: 1.5rem; cursor: pointer; }
+.class-members-subtitle { margin: 0; padding: 14px 20px; color: #785568; font-size: .9rem; }
+.class-members-list { padding: 0 20px 20px; }
+.class-member-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid #f7e5ed; }
+.class-member-avatar { display: grid; width: 38px; height: 38px; flex: 0 0 38px; place-items: center; border-radius: 50%; background: #fde5ef; color: #af2357; font-weight: 800; }
+.class-member-row strong, .class-member-row small { display: block; }
+.class-member-row small { margin-top: 2px; color: #856979; font-size: .76rem; }
+.class-member-number { margin-left: auto; color: #b68a9e; font-size: .8rem; font-weight: 700; }
+.class-members-empty { margin: 4px 0 0; padding: 18px; border: 1px dashed #efc9d8; border-radius: 8px; color: #785568; text-align: center; }
+
+/* The Super Admin workspace is limited to account administration. */
+body.admin-account-view .content-section {
+  display: none !important;
+}
+
 /* Professional in-class navigation tabs for Stream, work details, and records. */
 .class-stream-tabs {
   position: sticky;
@@ -2303,7 +2484,7 @@ body.admin-account-view #coursesContainer {
   max-width: 260px;
   padding: 10px 15px;
   border: 1px solid transparent;
-  border-radius: 9px;
+  border-radius: 6px;
   color: #785568;
   font-size: 0.88rem;
   transition: background 160ms ease, color 160ms ease, box-shadow 160ms ease;
@@ -2360,6 +2541,17 @@ body.admin-account-view #coursesContainer {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Shared rectangular surfaces use the same sharper corner language. Pills,
+   circular icons, avatars, and status badges intentionally stay rounded. */
+:is(
+  .overview-card, .stat-card, .course-card, .class-dashboard-header,
+  .class-card-mini, .class-main-panel, .class-work-panel, .class-stream-tabs,
+  .item-detail-view, .class-record-view, .assignment-panel, .mini-card,
+  .calendar-card, .calendar-event-dialog, .calendar-event-card,
+  .app-confirm-dialog, .record-table-wrap, .detail-file-card,
+  .student-submission-panel, .submission-review-item, .class-comment-item
+) { border-radius: 8px; }
 
 @media (max-width: 520px) {
   .app-toast { right: 16px; bottom: 16px; }

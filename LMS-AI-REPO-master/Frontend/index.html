@@ -57,6 +57,7 @@
           <button class="nav-btn" data-target="assignments">Assignments</button>
           <button class="nav-btn" data-target="calendar">Calendar</button>
           <button class="nav-btn" data-target="resources">Resources</button>
+          <button id="adminControlPanelBtn" class="nav-btn" data-target="admin-panel" hidden>Control Panel</button>
         </nav>
       </aside>
 
@@ -67,21 +68,30 @@
             <p id="academicInfo" class="topbar-subtitle"></p>
           </div>
           <div class="topbar-actions">
-            <div class="role-indicator" aria-label="Signed-in role">
-              <span>Signed in as:</span>
-              <strong id="signedInRole">Student</strong>
+            <div class="account-actions">
+              <div class="role-indicator" aria-label="Signed-in role">
+                <span>Hello,</span>
+                <strong id="signedInRole">Student</strong>
+              </div>
+              <button id="notificationBtn" class="ghost-btn notification-btn" aria-label="Notifications" title="Notifications" aria-haspopup="dialog" aria-expanded="false">
+                <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+                </svg>
+              </button>
+              <button id="logoutBtn" class="logout-btn" type="button" aria-label="Sign out" title="Sign out">
+                <svg class="signout-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M10 4H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h5M14 8l4 4-4 4M18 12H8" />
+                </svg>
+                <span>Sign out</span>
+              </button>
             </div>
-            <button id="notificationBtn" class="ghost-btn notification-btn" aria-label="Notifications" title="Notifications" aria-haspopup="dialog" aria-expanded="false">
-              <svg class="notification-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                <path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-              </svg>
-            </button>
-            <button id="joinClassBtn" class="primary-btn">Join Class</button>
-            <button id="createClassBtn" class="profile-settings-btn" aria-label="Create Class">
-              <span class="profile-avatar">+</span>
-              <span class="profile-label">Create Class</span>
-            </button>
-            <button id="logoutBtn" class="profile-settings-btn logout-btn" type="button">Log out</button>
+            <div class="class-actions">
+              <button id="joinClassBtn" class="primary-btn">Join Class</button>
+              <button id="createClassBtn" class="profile-settings-btn" aria-label="Create Class">
+                <span class="profile-avatar">+</span>
+                <span class="profile-label">Create Class</span>
+              </button>
+            </div>
           </div>
         </header>
 
@@ -272,7 +282,7 @@
         </div>
 
         <section id="classes" class="content-section active">
-          <section id="coursesContainer" class="course-list" aria-live="polite">
+          <section id="coursesContainer" class="course-list" aria-live="polite" data-loading="true">
             <p class="course-loader">Loading active classes…</p>
             <article class="course-card clickable" tabindex="0" role="button" data-course-category="Programming" data-course-title="EVENT-DRIVEN PROGRAMMING" data-course-description="Learn how user actions and system events drive interactive applications. Practice building event handlers and callback flows." data-class-materials='["Event callback notes", "Practice exercise", "Quiz 5"]' data-class-resources='["Example JS file", "Debugger tips", "Event flow chart"]' data-class-announcements='["Submit event handler assignment.", "Live coding session today at 3pm."]' data-class-upcoming='["Quiz 5 due tomorrow", "Interactive lab review"]'>
               <div class="course-title-row">
@@ -487,9 +497,16 @@
         <section id="classDetail" class="content-section">
           <div class="class-dashboard">
             <div class="class-dashboard-header">
-              <button id="backToClassesBtn" class="ghost-btn">Back to classes</button>
-              <div>
-                <p class="eyebrow" id="detailClassCategory">Class</p>
+              <div class="class-dashboard-actions">
+                <button id="backToClassesBtn" class="ghost-btn">Back to classes</button>
+              </div>
+              <div class="class-dashboard-class-info">
+                <div class="class-header-kicker">
+                  <p class="eyebrow" id="detailClassCategory">Class</p>
+                  <button id="classMembersBtn" class="class-members-btn" type="button" aria-label="View class members" title="Class Members">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3Zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3Zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5C15 14.17 10.33 13 8 13Zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.96 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5Z"/></svg>
+                  </button>
+                </div>
                 <h2 id="detailClassTitle">Selected Class</h2>
                 <p id="detailClassSubtitle">Keep track of work due and complete class activities.</p>
                 <p class="form-note">Code: <span id="detailClassCode">—</span> <button id="copyDetailCode" class="ghost-btn">Copy</button></p>
@@ -533,6 +550,7 @@
                 <div>
                   <h2 id="detailItemTitle">Class work</h2>
                   <p id="detailItemMeta">Details for this class work item.</p>
+                  <p id="detailItemDescription" class="detail-item-description" hidden></p>
                 </div>
               </div>
               <div id="detailFileContainer" class="detail-file-container"></div>
@@ -553,7 +571,12 @@
               </section>
               <div class="class-comments">
                 <h3>Class comments</h3>
-                <input type="text" aria-label="Add class comment" placeholder="Add comment..." />
+                <div id="classCommentsList" class="class-comments-list" aria-live="polite"></div>
+                <form id="classCommentForm" class="class-comment-form">
+                  <input id="classCommentInput" type="text" aria-label="Add class comment" placeholder="Add a comment..." maxlength="1000" autocomplete="off" />
+                  <button type="submit">Post</button>
+                </form>
+                <p id="classCommentMessage" class="class-comment-message" hidden></p>
               </div>
             </section>
           </div>
@@ -574,13 +597,15 @@
               <label>Title
                 <input id="workTitle" type="text" required placeholder="e.g. Module 2: Advanced Layouts">
               </label>
-              <label>Attach file
-                <div id="dropZone" class="file-drop-zone" role="button" tabindex="0" aria-describedby="dropZoneHelp">
-                  <span id="dropZoneText">Drag &amp; drop your file here, or <u>Browse</u></span>
-                  <small id="dropZoneHelp">PDF, DOCX, PPTX, PNG, or ZIP — maximum 25 MB</small>
-                  <input id="fileInput" name="file" type="file" hidden accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.zip">
-                </div>
+              <label>Description <span class="optional-field">(optional)</span>
+                <textarea id="workDescription" name="description" rows="3" maxlength="2000" placeholder="Add instructions or details for this class work..."></textarea>
               </label>
+              <label for="fileInput">Attach file</label>
+              <label id="dropZone" class="file-drop-zone" for="fileInput" role="button" tabindex="0" aria-describedby="dropZoneHelp">
+                <span id="dropZoneText">Drag &amp; drop your file here, or <u>Browse</u></span>
+                <small id="dropZoneHelp">PDF, DOCX, PPTX, PNG, or ZIP — maximum 25 MB</small>
+              </label>
+              <input id="fileInput" name="file" type="file" hidden accept=".pdf,.doc,.docx,.ppt,.pptx,.png,.zip">
               <div class="external-link-divider">— OR EXTERNAL LINK —</div>
               <label>External link
                 <input id="fileUrl" name="file_link" type="url" placeholder="https://docs.google.com/...">

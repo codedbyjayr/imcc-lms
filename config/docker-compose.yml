@@ -2,13 +2,11 @@ version: '3.8'
 
 services:
   web:
-    image: ${DOCKERHUB_USERNAME}/imcc-lms:latest
     container_name: portal_web
     ports:
       - "80:80"
     environment:
-      - SUPABASE_URL=${SUPABASE_URL}
-      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - DATABASE_URL=${DATABASE_URL}
     restart: always
     networks:
       - portal_net

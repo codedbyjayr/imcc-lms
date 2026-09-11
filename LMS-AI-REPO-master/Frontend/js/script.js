@@ -29,10 +29,20 @@ function syncUserSessionUI() {
   const createClassBtn = document.getElementById('createClassBtn');
   const joinClassBtn = document.getElementById('joinClassBtn');
   const addWorkBtn = document.getElementById('addWorkBtn');
+  const adminControlPanelBtn = document.getElementById('adminControlPanelBtn');
+  const standardNavButtons = document.querySelectorAll('.nav-btn:not(#adminControlPanelBtn)');
   document.body.classList.toggle('joined-class-view', currentRole !== 'dean');
-  if (createClassBtn) createClassBtn.hidden = currentRole !== 'dean';
-  if (joinClassBtn) joinClassBtn.hidden = currentRole === 'dean';
+  if (createClassBtn) createClassBtn.hidden = currentRole !== 'dean' || isAdmin;
+  if (joinClassBtn) joinClassBtn.hidden = currentRole === 'dean' || isAdmin;
   if (addWorkBtn) addWorkBtn.hidden = !canManageWork;
+  standardNavButtons.forEach((button) => { button.hidden = isAdmin; });
+  if (adminControlPanelBtn) {
+    adminControlPanelBtn.hidden = !isAdmin;
+    adminControlPanelBtn.classList.toggle('active', isAdmin);
+  }
+  if (isAdmin) {
+    document.querySelectorAll('.content-section').forEach((section) => section.classList.remove('active'));
+  }
 
   localStorage.setItem('lms_user_role', currentRole);
   const signedInRole = document.getElementById('signedInRole');
@@ -176,14 +186,15 @@ if (!res.ok) throw new Error(users.error || 'Failed to load accounts.');
 
 function canManageClassWork() {
   const userSession = JSON.parse(localStorage.getItem('lms_current_user') || '{}');
-  const currentRole = userSession.role || 'student';
-  return currentRole === 'dean' || currentRole === 'teacher';
+  const currentRole = String(userSession.role || 'student').toLowerCase().replace(/\s+/g, '');
+  return ['dean', 'teacher', 'instructor', 'admin', 'superadmin'].includes(currentRole);
 }
 
 function getCurrentUserId() {
   const userSession = JSON.parse(localStorage.getItem('lms_current_user') || '{}');
-  const userId = Number.parseInt(userSession.userId, 10);
-  return Number.isInteger(userId) ? userId : 1;
+  // Account IDs can be institutional IDs such as "qpc36415", not just numbers.
+  // Keep the exact stored identifier for all role-aware API requests.
+  return String(userSession.userId ?? userSession.student_id ?? '').trim() || null;
 }
 
 async function identifyChatbaseUser() {
@@ -374,7 +385,6 @@ function logoutUser() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  initRealGoogleSSO();
   const loginScreen = document.getElementById('loginScreen');
   const logoutBtn = document.getElementById('logoutBtn');
   logoutBtn?.addEventListener('click', logoutUser);
@@ -541,7 +551,7 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.setItem('lms_user_role', role);
     document.body.classList.toggle('joined-class-view', !isDean);
     if (createClassBtn) createClassBtn.hidden = !isDean;
-    if (joinClassBtn) joinClassBtn.hidden = isDean;
+    if (joinClassBtn) joinClassBtn.hidden = isDean || role === 'admin';
     const addWorkBtn = document.getElementById('addWorkBtn');
     if (addWorkBtn) addWorkBtn.hidden = !['dean', 'teacher'].includes(role);
     loadDashboardCourses();
@@ -673,6 +683,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const detailClassSubtitle = document.getElementById('detailClassSubtitle');
   const detailClassCode = document.getElementById('detailClassCode');
   const copyDetailCodeBtn = document.getElementById('copyDetailCode');
+  const classMembersBtn = document.getElementById('classMembersBtn');
   const detailMaterialsList = document.getElementById('detailMaterialsList');
   const detailResourcesList = document.getElementById('detailResourcesList');
   const detailAnnouncementsList = document.getElementById('detailAnnouncementsList');
@@ -714,6 +725,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const submissionReviewPanel = document.getElementById('submissionReviewPanel');
   const submissionReviewList = document.getElementById('submissionReviewList');
   const submissionGradeNote = document.getElementById('submissionGradeNote');
+  const classCommentsList = document.getElementById('classCommentsList');
+  const classCommentForm = document.getElementById('classCommentForm');
+  const classCommentInput = document.getElementById('classCommentInput');
+  const classCommentMessage = document.getElementById('classCommentMessage');
   let activeCourseId = null;
   let currentCourseData = { materials: [], assignments: [] };
   let selectedWorkItem = null;
@@ -721,9 +736,107 @@ document.addEventListener('DOMContentLoaded', () => {
   let activeRecordTab = 'grades';
   const submissionStates = new Map();
 
+  const setClassCommentMessage = (message = '', isError = false) => {
+    if (!classCommentMessage) return;
+    classCommentMessage.textContent = message;
+    classCommentMessage.hidden = !message;
+    classCommentMessage.classList.toggle('error', isError);
+  };
+
+  const loadClassComments = async (courseId) => {
+    if (!classCommentsList) return;
+    classCommentsList.innerHTML = '<p class="class-comments-empty">Loading comments...</p>';
+    try {
+      const response = await fetch(`/api/courses/${encodeURIComponent(courseId)}/comments`);
+      const comments = await response.json();
+      if (!response.ok) throw new Error(comments.error || 'Unable to load comments.');
+      if (activeCourseId !== courseId) return;
+      classCommentsList.innerHTML = '';
+      if (!comments.length) {
+        classCommentsList.innerHTML = '<p class="class-comments-empty">No comments yet. Start the conversation.</p>';
+        return;
+      }
+      comments.forEach((comment) => {
+        const item = document.createElement('article');
+        item.className = 'class-comment-item';
+        const author = document.createElement('strong');
+        author.textContent = comment.author_name || 'IMCC user';
+        const timestamp = document.createElement('time');
+        timestamp.dateTime = comment.created_at;
+        timestamp.textContent = new Date(comment.created_at).toLocaleString();
+        const content = document.createElement('p');
+        content.textContent = comment.content;
+        item.append(author, timestamp, content);
+        classCommentsList.appendChild(item);
+      });
+    } catch (error) {
+      classCommentsList.innerHTML = '<p class="class-comments-empty">Unable to load comments.</p>';
+      setClassCommentMessage(error.message || 'Unable to load comments.', true);
+    }
+  };
+
+  classCommentForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (!activeCourseId || !classCommentInput) return;
+    const content = classCommentInput.value.trim();
+    if (!content) return setClassCommentMessage('Write a comment before posting.', true);
+    const submitButton = classCommentForm.querySelector('button[type="submit"]');
+    submitButton.disabled = true;
+    setClassCommentMessage('Posting...');
+    try {
+      const response = await fetch(`/api/courses/${encodeURIComponent(activeCourseId)}/comments`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${localStorage.getItem('lms_auth_token') || ''}`,
+        },
+        body: JSON.stringify({ content, author_id: getCurrentUserId() }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to post the comment.');
+      classCommentInput.value = '';
+      setClassCommentMessage('Comment posted.');
+      await loadClassComments(activeCourseId);
+    } catch (error) {
+      setClassCommentMessage(error.message || 'Unable to post the comment.', true);
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
   const scrollToClassView = (element) => {
     if (!element) return;
     requestAnimationFrame(() => element.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  };
+
+  const closeClassMembers = () => document.getElementById('classMembersOverlay')?.remove();
+
+  const openClassMembers = async () => {
+    if (!activeCourseId) return;
+    closeClassMembers();
+    const overlay = document.createElement('div');
+    overlay.id = 'classMembersOverlay';
+    overlay.className = 'class-members-overlay';
+    overlay.innerHTML = `<section class="class-members-dialog" role="dialog" aria-modal="true" aria-labelledby="classMembersTitle"><div class="class-members-dialog-head"><div><span class="class-members-icon" aria-hidden="true">&#128101;</span><h2 id="classMembersTitle">Class Members</h2></div><button type="button" class="class-members-close" aria-label="Close class members">&times;</button></div><p class="class-members-subtitle">Loading members&hellip;</p><div class="class-members-list"></div></section>`;
+    document.body.appendChild(overlay);
+    const closeButton = overlay.querySelector('.class-members-close');
+    closeButton?.addEventListener('click', closeClassMembers);
+    overlay.addEventListener('click', (event) => { if (event.target === overlay) closeClassMembers(); });
+    const onKeyDown = (event) => { if (event.key === 'Escape') { closeClassMembers(); document.removeEventListener('keydown', onKeyDown); } };
+    document.addEventListener('keydown', onKeyDown);
+
+    try {
+      const response = await fetch(`/api/courses/${encodeURIComponent(activeCourseId)}/members`);
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Unable to load class members.');
+      const members = Array.isArray(result.members) ? result.members : [];
+      overlay.querySelector('.class-members-subtitle').textContent = `${members.length} member${members.length === 1 ? '' : 's'} enrolled in ${detailClassTitle?.textContent || 'this class'}.`;
+      overlay.querySelector('.class-members-list').innerHTML = members.length
+        ? members.map((member, index) => `<div class="class-member-row"><span class="class-member-avatar" aria-hidden="true">${escapeHtml(String(member.student_name || '?').trim().charAt(0).toUpperCase())}</span><div><strong>${escapeHtml(member.student_name || `Student #${member.student_id}`)}</strong><small>${member.year_level ? escapeHtml(member.year_level) : 'Class member'}</small></div><span class="class-member-number">${index + 1}</span></div>`).join('')
+        : '<p class="class-members-empty">No students have joined this class yet.</p>';
+    } catch (error) {
+      overlay.querySelector('.class-members-subtitle').textContent = error.message || 'Unable to load class members.';
+    }
   };
 
   const showClassTab = (activeView) => {
@@ -1010,6 +1123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!item || !streamContentArea || !itemDetailView) return;
     const title = document.getElementById('detailItemTitle');
     const meta = document.getElementById('detailItemMeta');
+    const description = document.getElementById('detailItemDescription');
     const icon = document.getElementById('detailItemIcon');
     const fileContainer = document.getElementById('detailFileContainer');
     const itemType = String(item.type || 'Lesson').toLowerCase();
@@ -1025,6 +1139,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (title) title.textContent = item.title;
     if (meta) meta.textContent = item.detail || `${item.type || 'Class work'}`;
+    if (description) {
+      description.hidden = !item.description;
+      description.textContent = item.description || '';
+    }
     if (icon) {
       icon.textContent = iconData.symbol;
       icon.className = `detail-item-icon ${iconData.className}`;
@@ -1056,6 +1174,7 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   tabStreamBtn?.addEventListener('click', switchToStreamView);
+  classMembersBtn?.addEventListener('click', openClassMembers);
   backToStreamBtn?.addEventListener('click', switchToStreamView);
   tabDetailBtn?.addEventListener('click', () => openItemDetail(selectedWorkItem));
   tabRecordBtn?.addEventListener('click', openClassRecord);
@@ -1129,8 +1248,13 @@ document.addEventListener('DOMContentLoaded', () => {
         dbTable: 'materials',
         type: 'Lesson',
         title: material.title || material.file_name || 'Untitled lesson',
+        description: material.description || '',
         detail: material.file_size || 'PDF document',
-        url: material.pdf_url,
+        url: material.pdf_url
+          ? (String(material.pdf_url).startsWith('/uploads/')
+            ? `/api/materials/${encodeURIComponent(material.material_id)}/preview`
+            : material.pdf_url)
+          : null,
       })),
       ...assignmentsWithStatus.map((assignment) => {
         const dueDate = assignment.due_date ? new Date(`${String(assignment.due_date).slice(0, 10)}T00:00:00`) : null;
@@ -1140,11 +1264,16 @@ document.addEventListener('DOMContentLoaded', () => {
         dbTable: 'assignments',
         type: assignment.type || 'Activity',
         title: assignment.title || 'Untitled activity',
+        description: assignment.description || '',
         totalPoints: assignment.total_points,
         dueDate: assignment.due_date,
         missing: isMissing,
         detail: `${isMissing ? 'MISSING — ' : ''}${assignment.due_date ? `Due ${new Date(assignment.due_date).toLocaleDateString()}` : 'No due date'}${assignment.total_points ? ` · ${assignment.total_points} pts` : ''}`,
-        url: assignment.file_url,
+        url: assignment.file_url
+          ? (String(assignment.file_url).startsWith('/uploads/')
+            ? `/api/assignments/${encodeURIComponent(assignment.assignment_id)}/preview`
+            : assignment.file_url)
+          : null,
         });
       }),
     ];
@@ -1302,6 +1431,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const courseId = Number(card.dataset.courseId);
     if (!courseId) return;
     activeCourseId = courseId;
+    setClassCommentMessage();
+    if (classCommentInput) classCommentInput.value = '';
+    loadClassComments(courseId);
     if (tabRecordBtn) tabRecordBtn.hidden = !canManageClassWork();
 
     const fillDetailList = (listElement, items, emptyMessage) => {
@@ -1375,7 +1507,13 @@ document.addEventListener('DOMContentLoaded', () => {
         'No materials uploaded yet.',
         (material) => `PDF: ${material.title || material.file_name || 'Untitled document'}`,
         (material) => {
-          if (material.pdf_url) window.open(material.pdf_url, '_blank', 'noopener');
+          if (material.pdf_url) window.open(
+            String(material.pdf_url).startsWith('/uploads/')
+              ? `/api/materials/${encodeURIComponent(material.material_id)}/preview`
+              : material.pdf_url,
+            '_blank',
+            'noopener'
+          );
         }
       );
       fillClickableDetailList(
@@ -1520,7 +1658,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (event.target === uploadModal) closeUploadModal();
   });
   workType?.addEventListener('change', setWorkTypeFields);
-  dropZone?.addEventListener('click', () => fileInput?.click());
   dropZone?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); fileInput?.click(); }
   });
@@ -1538,7 +1675,7 @@ document.addEventListener('DOMContentLoaded', () => {
   uploadForm?.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (!canManageClassWork()) {
-      if (uploadFormMessage) uploadFormMessage.textContent = 'Only Deans and Teachers can add class work.';
+      if (uploadFormMessage) uploadFormMessage.textContent = 'Only Deans and Instructors can add class work.';
       return;
     }
     if (!activeCourseId) return;
@@ -1547,6 +1684,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const formData = new FormData();
     formData.append('type', workType.value);
     formData.append('title', document.getElementById('workTitle').value.trim());
+    formData.append('description', document.getElementById('workDescription').value.trim());
     formData.append('file_link', document.getElementById('fileUrl').value.trim());
     formData.append('dueDate', document.getElementById('dueDate').value || '');
     formData.append('totalPoints', document.getElementById('totalPoints').value);
@@ -1824,6 +1962,11 @@ function formatTimeAgo(dateString) {
 }
 
 async function fetchDashboardData(studentId) {
+  if (!Number.isInteger(studentId)) {
+    await loadDashboardCourses([]);
+    return;
+  }
+
   try {
     const response = await fetch(`/api/dashboard/${studentId}`);
     if (!response.ok) {
@@ -1862,6 +2005,11 @@ async function loadDashboardCourses(fallbackCourses = []) {
   const role = localStorage.getItem('lms_user_role') || 'student';
   const userId = getCurrentUserId();
 
+  if (!userId) {
+    renderCourseCards([]);
+    return;
+  }
+
   try {
     const response = await fetch(`/api/courses?role=${role}&user_id=${userId}`);
     if (!response.ok) throw new Error(`Server error: ${response.status}`);
@@ -1875,6 +2023,7 @@ async function loadDashboardCourses(fallbackCourses = []) {
 function renderCourseCards(courses) {
   const container = document.getElementById('coursesContainer');
   if (!container) return;
+  container.removeAttribute('data-loading');
   const currentRole = String(localStorage.getItem('lms_user_role') || 'student').toLowerCase();
   const isDean = currentRole === 'dean';
   const isInstructor = ['teacher', 'instructor'].includes(currentRole);
@@ -2023,7 +2172,7 @@ async function loadAssignmentsPage() {
 
     if (!Array.isArray(assignments) || assignments.length === 0) {
       container.innerHTML = `
-        <div style="background: white; border: 1px solid #f8bbd0; border-radius: 16px; text-align: center; padding: 40px; color: #888;">
+        <div style="background: white; border: 1px solid #f8bbd0; border-radius: 8px; text-align: center; padding: 40px; color: #888;">
           <p style="font-size: 16px; font-weight: bold; color: #4a001f; margin-bottom: 6px;">No assignments found.</p>
           <p style="font-size: 13px; margin: 0;">Add an Activity, Task, or Quiz inside any class card to view it here.</p>
         </div>`;
@@ -2045,7 +2194,7 @@ async function loadAssignmentsPage() {
       const statusStyle = isMissing ? 'color:#b42318;background:#fee4e2;' : item.submission_id ? 'color:#1e7e34;background:#e6f4ea;' : 'color:#666;background:#f5f5f5;';
 
       return `
-        <div style="background: #fff; border: 1px solid #f8bbd0; border-left: 5px solid ${item.type === 'Quiz' ? '#9c27b0' : '#d81b60'}; border-radius: 14px; padding: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
+        <div style="background: #fff; border: 1px solid #f8bbd0; border-left: 5px solid ${item.type === 'Quiz' ? '#9c27b0' : '#d81b60'}; border-radius: 8px; padding: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; gap: 16px;">
           <div>
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
               <span style="font-size: 10px; font-weight: 800; background: #fff0f5; color: #d81b60; padding: 2px 8px; border-radius: 10px; text-transform: uppercase;">${type}</span>
@@ -2106,9 +2255,14 @@ async function openAssignmentModal(assignment, context) {
   aaStyles(); aaExtraStyles();
   const isStaff = !['student'].includes(String(context.role || '').toLowerCase());
   const icon = String(assignment.type || '').toLowerCase() === 'quiz' ? '📝' : '📄';
+  const documentUrl = assignment.document_path
+    ? (String(assignment.document_path).startsWith('/uploads/')
+      ? `/api/assignments/${encodeURIComponent(assignment.assignment_id)}/preview`
+      : assignment.document_path)
+    : null;
   const overlay = document.createElement('div');
   overlay.className = 'aa-overlay';
-  overlay.innerHTML = `<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Assignment details"><button class="aa-close" type="button" aria-label="Close">&times;</button><div class="aa-head"><div class="icon" aria-hidden="true">${icon}</div><div><h3>${aaEscape(assignment.title)}</h3><div class="aa-sub">${aaEscape(assignment.course_title)}${assignment.course_code ? ` (${aaEscape(assignment.course_code)})` : ''} · Due ${assignment.due_date ? new Date(assignment.due_date).toLocaleDateString() : 'No due date'} · ${assignment.total_points ?? 100} points</div></div></div>${assignment.document_path ? `<p><a class="aa-file" href="${aaEscape(assignment.document_path)}" target="_blank" rel="noopener">View attached document</a></p>` : ''}<hr class="aa-divider"><div class="aa-body">Loading…</div></div>`;
+  overlay.innerHTML = `<div class="aa-modal" role="dialog" aria-modal="true" aria-label="Assignment details"><button class="aa-close" type="button" aria-label="Close">&times;</button><div class="aa-head"><div class="icon" aria-hidden="true">${icon}</div><div><h3>${aaEscape(assignment.title)}</h3><div class="aa-sub">${aaEscape(assignment.course_title)}${assignment.course_code ? ` (${aaEscape(assignment.course_code)})` : ''} · Due ${assignment.due_date ? new Date(assignment.due_date).toLocaleDateString() : 'No due date'} · ${assignment.total_points ?? 100} points</div></div></div>${documentUrl ? `<p><a class="aa-file" href="${aaEscape(documentUrl)}" target="_blank" rel="noopener">View attached document</a></p>` : ''}<hr class="aa-divider"><div class="aa-body">Loading…</div></div>`;
   document.body.appendChild(overlay);
   const close = () => overlay.remove();
   overlay.querySelector('.aa-close').addEventListener('click', close);
@@ -2213,7 +2367,7 @@ const mcalEsc = (value) => aaEscape(value);
 function mcalStyles() {
   if (document.getElementById('mcalStyles')) return;
   const style = document.createElement('style'); style.id = 'mcalStyles';
-  style.textContent = `.cal-kicker{color:#d6336c;font-weight:800;font-size:12px;letter-spacing:1px}.cal-h2{margin:2px 0 14px;font-size:24px;color:#333}.cal-pillbtn{background:#fbdce8;color:#d6336c;border:0;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}.cal-card,.cal-item{background:#fdeef5;border:1px solid #f7cddd;border-radius:16px;padding:18px;margin-bottom:16px}.cal-top,.cal-navrow{display:flex;gap:8px;align-items:center}.cal-top{justify-content:space-between}.cal-month{font-size:18px;font-weight:800}.cal-count{background:#f9c9dd;color:#c2255c;border-radius:999px;padding:6px 14px;font-weight:700;font-size:13px}.cal-sub{color:#8a6470;font-size:13px}.cal-days,.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;text-align:center}.cal-days{font-size:11px;font-weight:800;color:#8a6470;margin:12px 0 8px}.cal-cell{border-radius:10px;padding:10px 0;font-weight:800;color:#8f1d3f;background:#fbe3ec;cursor:pointer}.cal-cell.out{background:#eef2f7;color:#b6c2cf;cursor:default}.cal-cell.past{border:1px solid #f76c6c}.cal-cell.today{background:#fdf3d7;border:1px solid #f5a623}.cal-cell.up{background:#d3f3ef;border:1px solid #20b2aa}.cal-item .cat{color:#c2255c;font-weight:800;font-size:14px}.cal-item .ttl{color:#333;font-weight:700;margin:4px 0}.cal-item .dsc{color:#8a6470;font-size:13px}`;
+  style.textContent = `.cal-kicker{color:#d6336c;font-weight:800;font-size:12px;letter-spacing:1px}.cal-h2{margin:2px 0 14px;font-size:24px;color:#333}.cal-pillbtn{background:#fbdce8;color:#d6336c;border:0;border-radius:999px;padding:7px 14px;font-weight:700;cursor:pointer}.cal-card,.cal-item{background:#fdeef5;border:1px solid #f7cddd;border-radius:8px;padding:18px;margin-bottom:16px}.cal-top,.cal-navrow{display:flex;gap:8px;align-items:center}.cal-top{justify-content:space-between}.cal-month{font-size:18px;font-weight:800}.cal-count{background:#f9c9dd;color:#c2255c;border-radius:999px;padding:6px 14px;font-weight:700;font-size:13px}.cal-sub{color:#8a6470;font-size:13px}.cal-days,.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:8px;text-align:center}.cal-days{font-size:11px;font-weight:800;color:#8a6470;margin:12px 0 8px}.cal-cell{border-radius:8px;padding:10px 0;font-weight:800;color:#8f1d3f;background:#fbe3ec;cursor:pointer}.cal-cell.out{background:#eef2f7;color:#b6c2cf;cursor:default}.cal-cell.past{border:1px solid #f76c6c}.cal-cell.today{background:#fdf3d7;border:1px solid #f5a623}.cal-cell.up{background:#d3f3ef;border:1px solid #20b2aa}.cal-item .cat{color:#c2255c;font-weight:800;font-size:14px}.cal-item .ttl{color:#333;font-weight:700;margin:4px 0}.cal-item .dsc{color:#8a6470;font-size:13px}`;
   document.head.appendChild(style);
 }
 function renderMonthlyCalendar(context, root) {
@@ -2439,7 +2593,7 @@ const resIcon = (url) => {
 function resStyles() {
   if (document.getElementById('resStyles')) return;
   const style = document.createElement('style'); style.id = 'resStyles';
-  style.textContent = `.res-search{width:100%;max-width:420px;padding:11px 16px;border:1.5px solid #ecd3dd;border-radius:999px;outline:none;margin-bottom:16px;font-size:14px;box-sizing:border-box}.res-search:focus{border-color:#d6336c;box-shadow:0 0 0 3px rgba(214,51,108,.12)}.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}.res-card{background:#fff;border:1px solid #f0dfe6;border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(176,36,88,.06)}.res-icon{width:46px;height:46px;border-radius:12px;background:#fde8ef;display:flex;align-items:center;justify-content:center;font-size:22px}.res-title{font-weight:800;color:#333}.res-class{color:#b02458;font-size:12px;font-weight:700}.res-actions{display:flex;gap:8px;margin-top:auto}.res-view,.res-dl{flex:1;text-align:center;border-radius:999px;padding:9px 0;font-weight:700;text-decoration:none;font-size:13px}.res-view{border:1.5px solid #d6336c;color:#b02458;background:#fff}.res-view:hover{background:#fde8ef}.res-dl{background:linear-gradient(135deg,#e0477e,#d6336c);color:#fff}.res-dl:hover{filter:brightness(1.07)}`;
+  style.textContent = `.res-search{width:100%;max-width:420px;padding:11px 16px;border:1.5px solid #ecd3dd;border-radius:8px;outline:none;margin-bottom:16px;font-size:14px;box-sizing:border-box}.res-search:focus{border-color:#d6336c;box-shadow:0 0 0 3px rgba(214,51,108,.12)}.res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px}.res-card{background:#fff;border:1px solid #f0dfe6;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:8px;box-shadow:0 2px 8px rgba(176,36,88,.06)}.res-icon{width:46px;height:46px;border-radius:8px;background:#fde8ef;display:flex;align-items:center;justify-content:center;font-size:22px}.res-title{font-weight:800;color:#333}.res-class{color:#b02458;font-size:12px;font-weight:700}.res-actions{display:flex;gap:8px;margin-top:auto}.res-view,.res-dl{flex:1;text-align:center;border-radius:8px;padding:9px 0;font-weight:700;text-decoration:none;font-size:13px}.res-view{border:1.5px solid #d6336c;color:#b02458;background:#fff}.res-view:hover{background:#fde8ef}.res-dl{background:linear-gradient(135deg,#e0477e,#d6336c);color:#fff}.res-dl:hover{filter:brightness(1.07)}`;
   document.head.appendChild(style);
 }
 function renderResourcesPage(ctx, root) {
@@ -2447,7 +2601,7 @@ function renderResourcesPage(ctx, root) {
   const isStaff = ['instructor', 'teacher', 'dean', 'admin', 'superadmin'].includes(String(ctx.role || '').toLowerCase().replace(/\s+/g, ''));
   root.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:start"><div><div class="cal-kicker">RESOURCES</div><div class="cal-h2">Study Library</div></div>${isStaff ? '<button class="cal-pillbtn" id="resAdd">+ Add Resource</button>' : ''}</div><p class="cal-sub">Lessons and materials shared by your instructors.</p><input class="res-search" id="resSearch" placeholder="🔍 Search by title or class…"><div class="res-grid" id="resGrid"></div>`;
   let items = []; const grid = root.querySelector('#resGrid');
-  const draw = (filter = '') => { const query = filter.toLowerCase(); const visible = items.filter((item) => !query || String(item.title).toLowerCase().includes(query) || String(item.course_title || '').toLowerCase().includes(query)); grid.innerHTML = visible.length ? visible.map((item) => `<div class="res-card"><div class="res-icon">${resIcon(item.pdf_url)}</div><div class="res-title">${resEsc(item.title)}</div><div class="res-class">📘 ${resEsc(item.course_title || '')}${item.course_code ? ` (${resEsc(item.course_code)})` : ''}</div>${item.pdf_url ? `<div class="res-actions"><a class="res-view" href="${resEsc(item.pdf_url)}" target="_blank" rel="noopener">◉ View</a><a class="res-dl" href="/api/materials/${encodeURIComponent(item.material_id)}/download">⇩ Download</a></div>` : '<div class="res-class">No file attached</div>'}</div>`).join('') : '<p class="cal-sub">No resources found.</p>'; };
+  const draw = (filter = '') => { const query = filter.toLowerCase(); const visible = items.filter((item) => !query || String(item.title).toLowerCase().includes(query) || String(item.course_title || '').toLowerCase().includes(query)); grid.innerHTML = visible.length ? visible.map((item) => { const viewUrl = String(item.pdf_url).startsWith('/uploads/') ? `/api/materials/${encodeURIComponent(item.material_id)}/preview` : item.pdf_url; return `<div class="res-card"><div class="res-icon">${resIcon(item.pdf_url)}</div><div class="res-title">${resEsc(item.title)}</div><div class="res-class">📘 ${resEsc(item.course_title || '')}${item.course_code ? ` (${resEsc(item.course_code)})` : ''}</div>${item.pdf_url ? `<div class="res-actions"><a class="res-view" href="${resEsc(viewUrl)}" target="_blank" rel="noopener">◉ View</a><a class="res-dl" href="/api/materials/${encodeURIComponent(item.material_id)}/download">⇩ Download</a></div>` : '<div class="res-class">No file attached</div>'}</div>`; }).join('') : '<p class="cal-sub">No resources found.</p>'; };
   root.querySelector('#resSearch').oninput = (event) => draw(event.target.value);
   root.querySelector('#resAdd')?.addEventListener('click', () => resAddModal(ctx, load));
   async function load() { grid.innerHTML = '<p class="cal-sub">Loading…</p>'; const response = await fetch(`/api/pages/resources?role=${encodeURIComponent(ctx.role)}&user_id=${encodeURIComponent(ctx.userId)}`); items = response.ok ? await response.json() : []; draw(); }
@@ -2458,7 +2612,23 @@ function resAddModal(ctx, onDone) {
   const overlay = document.createElement('div'); overlay.id = 'resProOverlay';
   overlay.innerHTML = `<style>#resProOverlay{position:fixed;inset:0;background:rgba(60,10,30,.45);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;z-index:9999;padding:16px}.res-modal{width:min(560px,94vw);background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.35)}.res-modal-head{background:linear-gradient(135deg,#e0477e,#b02458);color:#fff;padding:18px 22px;display:flex;justify-content:space-between;align-items:center}.res-modal-head h3{margin:0;font-size:18px}.res-modal-body{padding:20px 22px}.res-modal-label{display:block;font-size:11px;font-weight:800;letter-spacing:.6px;color:#8f1d3f;text-transform:uppercase;margin:14px 0 6px}.res-modal-input{width:100%;padding:11px 12px;border:1.5px solid #ecd3dd;border-radius:10px;font-size:14px;box-sizing:border-box}.res-modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:16px 22px;border-top:1px solid #f3e1e9;background:#fdf7fa}.res-modal-btn{border:0;border-radius:999px;padding:11px 22px;font-weight:800;cursor:pointer}.res-modal-save{background:linear-gradient(135deg,#e0477e,#d6336c);color:#fff}.res-modal-error{color:#c62828;font-size:12px;margin-top:12px;display:none}</style><div class="res-modal"><div class="res-modal-head"><h3>📚 Add Resource</h3><button type="button" data-close>✕</button></div><div class="res-modal-body"><label class="res-modal-label">Resource title *</label><input class="res-modal-input" id="resTitle" placeholder="e.g. Chapter 1 – Networking Basics"><label class="res-modal-label">Class *</label><select class="res-modal-input" id="resClass"><option value="">Loading classes…</option></select><label class="res-modal-label">File</label><input class="res-modal-input" type="file" id="resFile"><label class="res-modal-label">Or paste a link</label><input class="res-modal-input" id="resLink" placeholder="https://…"><p class="res-modal-error" id="resError"></p></div><div class="res-modal-foot"><button class="res-modal-btn" type="button" data-close>Cancel</button><button class="res-modal-btn res-modal-save" id="resSave" type="button">Save Resource</button></div></div>`;
   document.body.appendChild(overlay); const close = () => overlay.remove(); overlay.querySelectorAll('[data-close]').forEach((button) => button.onclick = close); overlay.onclick = (event) => { if (event.target === overlay) close(); };
-  fetch(`/api/pages/my-classes?role=${encodeURIComponent(ctx.role)}&user_id=${encodeURIComponent(ctx.userId)}`).then((response) => response.json()).then((classes) => { overlay.querySelector('#resClass').innerHTML = (Array.isArray(classes) ? classes : []).map((course) => `<option value="${course.course_id}">${resEsc(course.title)}${course.code ? ` (${resEsc(course.code)})` : ''}</option>`).join('') || '<option value="">No classes available</option>'; });
+  fetch(`/api/pages/my-classes?role=${encodeURIComponent(ctx.role)}&user_id=${encodeURIComponent(ctx.userId)}`)
+    .then(async (response) => {
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Unable to load your classes.');
+      return data;
+    })
+    .then((classes) => {
+      overlay.querySelector('#resClass').innerHTML = (Array.isArray(classes) ? classes : [])
+        .map((course) => `<option value="${course.course_id}">${resEsc(course.title)}${course.code ? ` (${resEsc(course.code)})` : ''}</option>`)
+        .join('') || '<option value="">No classes available</option>';
+    })
+    .catch((error) => {
+      overlay.querySelector('#resClass').innerHTML = '<option value="">Unable to load classes</option>';
+      const message = overlay.querySelector('#resError');
+      message.textContent = error.message;
+      message.style.display = 'block';
+    });
   overlay.querySelector('#resSave').onclick = async () => { const error = overlay.querySelector('#resError'); const title = overlay.querySelector('#resTitle').value.trim(); const courseId = overlay.querySelector('#resClass').value; const file = overlay.querySelector('#resFile').files[0]; const link = overlay.querySelector('#resLink').value.trim(); const fail = (message) => { error.textContent = message; error.style.display = 'block'; }; error.style.display = 'none'; if (!title) return fail('Please enter a title.'); if (!courseId) return fail('Please choose a class.'); if (!file && !link) return fail('Attach a file or paste a link.'); const button = overlay.querySelector('#resSave'); button.disabled = true; button.textContent = 'Saving…'; const form = new FormData(); form.append('title', title); form.append('course_id', courseId); form.append('role', ctx.role); form.append('user_id', String(ctx.userId)); if (file) form.append('file', file); if (link) form.append('file_link', link); const response = await fetch('/api/pages/resources', { method: 'POST', body: form }); const data = await response.json().catch(() => ({})); button.disabled = false; button.textContent = 'Save Resource'; if (!response.ok) return fail(data.error || 'Could not save the resource.'); close(); if (onDone) onDone(); };
 }
 
@@ -2479,8 +2649,25 @@ async function renderClassRecordPro(courseId, ctx, root, courseTitle) {
   const staff = ['instructor', 'teacher', 'dean', 'admin', 'superadmin'].includes(String(ctx.role || '').toLowerCase().replace(/\s+/g, ''));
   const percentage = (score, assignment) => (Number(score.score) / Number(assignment.total_points || 100)) * 100;
   const grid = assignments.length ? `<table class="cr-table"><thead><tr><th>Student</th>${assignments.map((assignment) => `<th>${crEsc(assignment.title)}<span class="cr-pts">/ ${assignment.total_points} pts</span></th>`).join('')}<th>Average</th></tr></thead><tbody>${students.map((student) => { let count = 0; let total = 0; const cells = assignments.map((assignment) => { const score = scores[`${student.student_id}|${assignment.assignment_id}`]; if (!score || score.score == null) return '<td class="cr-none">—</td>'; const pct = percentage(score, assignment); count++; total += pct; return `<td class="${pct >= 75 ? 'cr-pass' : 'cr-fail'}">${score.score}</td>`; }).join(''); return `<tr><td><strong>${crEsc(student.student_name)}</strong> <span class="cr-id">#${crEsc(student.student_id)}</span></td>${cells}<td class="cr-avg">${count ? `${Math.round(total / count)}%` : '—'}</td></tr>`; }).join('')}</tbody></table>` : '<p class="cr-id">No activities or quizzes created yet.</p>';
-  root.innerHTML = `<div class="cr-h"><span class="cr-title">📋 Class List (${students.length} student${students.length === 1 ? '' : 's'})</span></div><div class="cr-card">${students.length ? `<table class="cr-table"><thead><tr><th>#</th><th>Student ID</th><th>Name</th><th>Year Level</th><th>Academic Year</th>${staff ? '<th></th>' : ''}</tr></thead><tbody>${students.map((student, index) => `<tr><td>${index + 1}</td><td>${crEsc(student.student_id)}</td><td><strong>${crEsc(student.student_name)}</strong></td><td>${crEsc(student.year_level || '—')}</td><td>${crEsc(student.academic_year || '—')}</td>${staff ? `<td><button class="cr-remove" data-sid="${crEsc(student.student_id)}">Remove</button></td>` : ''}</tr>`).join('')}</tbody></table>` : '<p class="cr-id">No students enrolled yet.</p>'}</div><div class="cr-h"><span class="cr-title">🎓 Grade Grid</span><span style="display:flex;gap:8px"><button class="cr-btn cr-csv" id="crCsv">⬇ Export CSV</button><button class="cr-btn cr-print" id="crPrint">🖨 Print / Save PDF</button></span></div><div class="cr-card">${grid}</div>`;
-  root.querySelectorAll('.cr-remove').forEach((button) => button.onclick = async () => { if (!window.confirm(`Remove student #${button.dataset.sid} from this class?`)) return; const result = await fetch(`/api/courses/${courseId}/students/${encodeURIComponent(button.dataset.sid)}?teacher_id=${encodeURIComponent(ctx.userId)}`, { method: 'DELETE' }); if (!result.ok) return window.alert((await result.json().catch(() => ({}))).error || 'Failed to remove student.'); renderClassRecordPro(courseId, ctx, root, courseTitle); });
+  root.innerHTML = `<div class="cr-h"><span class="cr-title">📋 Class List (${students.length} student${students.length === 1 ? '' : 's'})</span></div><div class="cr-card">${students.length ? `<table class="cr-table"><thead><tr><th>#</th><th>Student ID</th><th>Name</th><th>Year Level</th><th>Academic Year</th>${staff ? '<th></th>' : ''}</tr></thead><tbody>${students.map((student, index) => `<tr><td>${index + 1}</td><td>${crEsc(student.student_id)}</td><td><strong>${crEsc(student.student_name)}</strong></td><td>${crEsc(student.year_level || '—')}</td><td>${crEsc(student.academic_year || '—')}</td>${staff ? `<td><button class="cr-remove" data-sid="${crEsc(student.student_id)}" data-student-name="${crEsc(student.student_name)}">Remove</button></td>` : ''}</tr>`).join('')}</tbody></table>` : '<p class="cr-id">No students enrolled yet.</p>'}</div><div class="cr-h"><span class="cr-title">🎓 Grade Grid</span><span style="display:flex;gap:8px"><button class="cr-btn cr-csv" id="crCsv">⬇ Export CSV</button><button class="cr-btn cr-print" id="crPrint">🖨 Print / Save PDF</button></span></div><div class="cr-card">${grid}</div>`;
+  root.querySelectorAll('.cr-remove').forEach((button) => button.onclick = async () => {
+    const studentName = button.dataset.studentName || `student #${button.dataset.sid}`;
+    const confirmed = await showConfirmationDialog({
+      title: 'Remove student?',
+      message: `${studentName} will lose access to this class. Their submitted work and grades will be retained.`,
+      confirmLabel: 'Remove student',
+    });
+    if (!confirmed) return;
+
+    button.disabled = true;
+    const result = await fetch(`/api/courses/${courseId}/students/${encodeURIComponent(button.dataset.sid)}?teacher_id=${encodeURIComponent(ctx.userId)}`, { method: 'DELETE' });
+    if (!result.ok) {
+      button.disabled = false;
+      return window.alert((await result.json().catch(() => ({}))).error || 'Failed to remove student.');
+    }
+    showToast(`${studentName} has been removed from this class.`);
+    renderClassRecordPro(courseId, ctx, root, courseTitle);
+  });
   root.querySelector('#crCsv').onclick = () => { const quote = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`; const header = ['Student ID', 'Student Name', 'Year Level', 'Academic Year', ...assignments.map((assignment) => `${assignment.title} (/${assignment.total_points})`), 'Average %']; const rows = [header]; students.forEach((student) => { let count = 0; let total = 0; const values = assignments.map((assignment) => { const score = scores[`${student.student_id}|${assignment.assignment_id}`]; if (!score || score.score == null) return ''; count++; total += percentage(score, assignment); return score.score; }); rows.push([student.student_id, student.student_name, student.year_level || '', student.academic_year || '', ...values, count ? Math.round(total / count) : '']); }); const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([rows.map((row) => row.map(quote).join(',')).join('\n')], { type: 'text/csv' })); link.download = `Class-Record-${String(courseTitle || courseId).replace(/[^\w-]+/g, '_')}.csv`; link.click(); URL.revokeObjectURL(link.href); };
   root.querySelector('#crPrint').onclick = () => { const popup = window.open('', '_blank'); popup.document.write(`<html><head><title>Class Record</title><style>body{font-family:Segoe UI,Arial;padding:24px;color:#222}table{border-collapse:collapse;width:100%;margin-top:14px;font-size:12px}td,th{border:1px solid #ccc;padding:6px 8px;text-align:left}th{background:#fdeef5}</style></head><body><h1>IMCC LMS — Class Record</h1><h2>${crEsc(courseTitle || `Class #${courseId}`)}</h2><p>Generated ${new Date().toLocaleString()}</p>${grid}</body></html>`); popup.document.close(); popup.focus(); popup.print(); };
 }
@@ -2545,7 +2732,11 @@ function initRealGoogleSSO(googleClientId) {
   }
   const setup = () => {
     if (!window.google?.accounts?.id) return false;
-    google.accounts.id.initialize({ client_id: googleClientId, callback: handleGoogleSSOLogin });
+    google.accounts.id.initialize({
+      client_id: googleClientId,
+      callback: handleGoogleSSOLogin,
+      auto_select: false,
+    });
     let holder = document.getElementById('googleRealBtn');
     if (!holder) {
       const oldBtn = Array.from(document.querySelectorAll('#loginScreen button')).find((b) => /sign in with google/i.test(b.textContent || ''));
@@ -2616,7 +2807,8 @@ async function assignRoleToEmail() {
       window.alert(data.error || 'Failed to assign role.');
       return;
     }
-    window.alert(data.message);
+    const roleLabel = { student: 'Student', teacher: 'Instructor', dean: 'Dean' }[role] || role;
+    showToast(`Role assigned successfully. ${email} now has ${roleLabel} access.`);
     if (emailInput) emailInput.value = '';
     if (nameInput) nameInput.value = '';
     loadAndDisplayUserAccounts();
@@ -2734,7 +2926,9 @@ function upgradeCreateClassInstructorPicker() {
           instructor: instructorName || 'Instructor not set',
           section,
           subText: subjectNotes,
-          teacherId: Number.isInteger(instructorId) ? instructorId : getCurrentUserId(),
+          // A dean may deliberately leave the class unassigned.  Do not turn
+          // that into an assignment to the dean's own account.
+          teacherId: Number.isInteger(instructorId) ? instructorId : null,
         }),
       });
       const data = await response.json();
@@ -2765,6 +2959,10 @@ document.addEventListener('DOMContentLoaded', () => {
 async function loadDashboardCourses(fallbackCourses = []) {
   const role = localStorage.getItem('lms_user_role') || 'student';
   const userId = getCurrentUserId();
+  if (!userId) {
+    renderCourseCards([]);
+    return;
+  }
   try {
     const [response, usersRes] = await Promise.all([
       fetch(`/api/courses?role=${role}&user_id=${userId}`),
@@ -2775,12 +2973,12 @@ async function loadDashboardCourses(fallbackCourses = []) {
     const names = new Map((Array.isArray(users) ? users : []).map((u) => [String(u.student_id), String(u.name || '')]));
     const courses = await response.json();
     courses.forEach((course) => {
-      const name = names.get(String(course.teacher_id));
+      const name = String(course.instructor_name || names.get(String(course.teacher_id)) || '').trim();
       if (!name) return;
       const [metaPart = '', notePart = ''] = String(course.sub_text || '').split('|').map((p) => p.trim());
       const metaParts = metaPart.split('•').map((p) => p.trim());
       while (metaParts.length < 5) metaParts.push('');
-      if (!metaParts[3] || metaParts[3] === 'Instructor not set') {
+      if (!metaParts[3] || /^(instructor not set|no instructor assigned)$/i.test(metaParts[3])) {
         metaParts[3] = name;
         course.sub_text = `${metaParts.join(' • ')}${notePart ? ` | ${notePart}` : ''}`;
       }
