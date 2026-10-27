@@ -16,6 +16,7 @@ const app = express();
 // Office for the web receives the public HTTPS document URL, not localhost/HTTP.
 app.set('trust proxy', 1);
 //app.use(cors());
+const cors = require('cors');
 app.use(cors({
     origin: ['https://imcc-lms2.vercel.app', 'http://localhost:5000'], 
     credentials: true
