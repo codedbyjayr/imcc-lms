@@ -2827,7 +2827,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   // Fetch GOOGLE_CLIENT_ID from backend config (never hardcode it in frontend source)
   try {
-    const cfg = await fetch('/api/config').then((r) => r.json());
+    const cfg = await fetch(`${API_URL}/api/config`).then((r) => r.json());
     initRealGoogleSSO(cfg.googleClientId || '');
   } catch (_e) {
     console.warn('[SSO] Could not load /api/config; Google sign-in may be unavailable.');
