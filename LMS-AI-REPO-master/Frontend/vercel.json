@@ -2,22 +2,22 @@
   "version": 2,
   "builds": [
     {
-      "src": "**/*.html",
+      "src": "LMS-AI-REPO-master/Frontend/**",
       "use": "@vercel/static"
     },
     {
-      "src": "**/*.js",
-      "use": "@vercel/static"
-    },
-    {
-      "src": "**/*.css",
-      "use": "@vercel/static"
+      "src": "LMS-AI-REPO-master/Backend/server.js",
+      "use": "@vercel/node"
     }
   ],
-  "rewrites": [
+  "routes": [
     {
-      "source": "/api/(.*)",
-      "destination": "https://imcc-lms.onrender.com/api/$1"
+      "src": "/api/(.*)",
+      "dest": "LMS-AI-REPO-master/Backend/server.js"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "LMS-AI-REPO-master/Frontend/$1"
     }
   ]
 }
