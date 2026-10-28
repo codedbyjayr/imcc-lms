@@ -14,10 +14,10 @@
       "use": "@vercel/static"
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/(.*)",
-      "dest": "/$1"
+      "source": "/api/(.*)",
+      "destination": "https://imcc-lms.onrender.com/api/$1"
     }
   ]
 }
